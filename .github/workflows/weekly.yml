@@ -22,7 +22,7 @@ jobs:
           cache: 'pip'
 
       - name: Install ffmpeg
-        run: sudo apt-get install -y ffmpeg
+        run: run: sudo apt-get update --fix-missing && sudo apt-get install -y ffmpeg --fix-missing
 
       - name: Install dependencies
         run: pip install -r requirements.txt
