@@ -110,27 +110,53 @@ def generate_with_together(prompt, width=1024, height=1024):
 # FONTE 2: GEMINI IMAGE API — 500 imagens/dia gratis
 # Usa a GEMINI_API_KEY que voce ja tem configurada
 # ══════════════════════════════════════════════════════════
-def generate_with_gemini(prompt, width=1920, height=1080):
+def generate_with_gemini(prompt, width=1024, height=1024):
     if not GEMINI_KEY:
         raise ValueError("GEMINI_API_KEY nao configurada")
-    print(f"   [Gemini Image] Gerando...")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent?key={GEMINI_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}
+    print(f"   [Gemini Imagen] Gerando...")
+    # Tenta Imagen 3 primeiro, depois flash com imagem
+    endpoints = [
+        f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={GEMINI_KEY}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key={GEMINI_KEY}",
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}",
+    ]
+    # Imagen 3 payload
+    imagen_payload = {
+        "instances": [{"prompt": prompt[:900]}],
+        "parameters": {"sampleCount": 1, "aspectRatio": "16:9"}
     }
-    r = requests.post(url, json=payload, timeout=120)
-    r.raise_for_status()
-    data = r.json()
-    # Extrai imagem base64 da resposta
-    for candidate in data.get("candidates", []):
-        for part in candidate.get("content", {}).get("parts", []):
-            if "inlineData" in part:
-                img_data = base64.b64decode(part["inlineData"]["data"])
+    try:
+        r = requests.post(endpoints[0], json=imagen_payload, timeout=90)
+        if r.status_code == 200:
+            data = r.json()
+            predictions = data.get("predictions", [])
+            if predictions and predictions[0].get("bytesBase64Encoded"):
+                img_data = base64.b64decode(predictions[0]["bytesBase64Encoded"])
                 img = Image.open(BytesIO(img_data)).convert("RGB")
-                print(f"   -> Gemini: {img.width}x{img.height}")
+                print(f"   -> Gemini Imagen3: {img.width}x{img.height}")
                 return img
-    raise RuntimeError("Gemini nao retornou imagem na resposta")
+    except Exception as e:
+        print(f"   Imagen3 falhou: {e}")
+    # Flash com imagem payload
+    flash_payload = {
+        "contents": [{"parts": [{"text": prompt[:900]}]}],
+        "generationConfig": {"responseModalities": ["IMAGE","TEXT"]}
+    }
+    for ep in endpoints[1:]:
+        try:
+            r = requests.post(ep, json=flash_payload, timeout=90)
+            if r.status_code == 200:
+                data = r.json()
+                for candidate in data.get("candidates", []):
+                    for part in candidate.get("content", {}).get("parts", []):
+                        if "inlineData" in part:
+                            img_data = base64.b64decode(part["inlineData"]["data"])
+                            img = Image.open(BytesIO(img_data)).convert("RGB")
+                            print(f"   -> Gemini Flash: {img.width}x{img.height}")
+                            return img
+        except Exception as e:
+            print(f"   Flash endpoint falhou: {e}")
+    raise RuntimeError("Gemini: nenhum endpoint retornou imagem")
 
 
 # ══════════════════════════════════════════════════════════
