@@ -1,0 +1,16 @@
+# Secrets — NUNCA suba esses arquivos para o GitHub
+.env
+token.json
+client_secrets.json
+
+# Arquivos gerados (temporários)
+*.mp3
+*.mp4
+*.jpg
+sounds_tmp/
+metadata_*.json
+last_upload.json
+__pycache__/
+*.pyc
+.venv/
+venv/
