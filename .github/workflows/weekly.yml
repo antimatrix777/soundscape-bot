@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: '0 13 * * 2'   # Terça-feira 10h BRT
     - cron: '0 13 * * 5'   # Sexta-feira 10h BRT
-  workflow_dispatch:        # Permite rodar manualmente
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -36,8 +36,9 @@ jobs:
           MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
           GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
           FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
-          PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:   ${{ secrets.PIXABAY_API_KEY }}
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
+          PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
           YT_TOKEN_B64:      ${{ secrets.YT_TOKEN_B64 }}
         run: python run_pipeline.py
 
