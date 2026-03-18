@@ -156,7 +156,7 @@ Return ONLY this JSON structure:
   "youtube_category_id": "10"
 }}"""
 
-    model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
+    model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     raw = response.text.strip()
     # Remove markdown fences if present
