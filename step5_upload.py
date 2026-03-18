@@ -132,12 +132,29 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
 
+    # Sanitiza tags — YouTube rejeita tags com caracteres invalidos
+    def sanitize_tags(tags):
+        import re
+        clean = []
+        for tag in tags:
+            tag = str(tag).strip()
+            tag = tag.lstrip("#")
+            tag = re.sub(r'[<>"\[\]{}|\\^`]', "", tag)
+            tag = tag[:100]
+            if tag and len(tag) >= 2:
+                clean.append(tag)
+        return clean[:30]
+
+    raw_tags  = metadata.get("tags", [])
+    sanitized = sanitize_tags(raw_tags)
+    print(f"   Tags: {len(raw_tags)} originais -> {len(sanitized)} aprovadas")
+
     # Body do request
     body = {
         "snippet": {
-            "title": metadata["title"],
-            "description": metadata["description"],
-            "tags": metadata.get("tags", []),
+            "title": metadata["title"][:100],
+            "description": metadata["description"][:5000],
+            "tags": sanitized,
             "categoryId": metadata.get("youtube_category_id", "10"),
             "defaultLanguage": "pt",
         },
