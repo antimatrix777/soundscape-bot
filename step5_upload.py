@@ -132,22 +132,41 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
 
-    # Sanitiza tags — YouTube rejeita tags com caracteres invalidos
+    # Sanitiza tags — YouTube e muito rigoroso com keywords
     def sanitize_tags(tags):
         import re
-        clean = []
+        if not isinstance(tags, list):
+            return []
+        expanded = []
         for tag in tags:
             tag = str(tag).strip()
-            tag = tag.lstrip("#")
-            tag = re.sub(r'[<>"\[\]{}|\\^`]', "", tag)
-            tag = tag[:100]
-            if tag and len(tag) >= 2:
+            # Se a tag tem virgula, divide em multiplas tags
+            if "," in tag:
+                parts = [p.strip() for p in tag.split(",")]
+                expanded.extend(parts)
+            else:
+                expanded.append(tag)
+        clean = []
+        seen  = set()
+        for tag in expanded:
+            tag = str(tag).strip()
+            tag = tag.lstrip("#").lstrip("@")
+            # Remove TODOS os caracteres especiais exceto letras, numeros, espacos e hifens
+            tag = re.sub(r"[^a-zA-Z0-9\s\-]", "", tag)
+            tag = re.sub(r"\s+", " ", tag).strip()
+            tag = tag[:50]  # max 50 chars por tag (conservador)
+            low = tag.lower()
+            if tag and len(tag) >= 2 and low not in seen:
+                seen.add(low)
                 clean.append(tag)
-        return clean[:30]
+            if len(clean) >= 25:  # max 25 tags (conservador, limite e 500 chars total)
+                break
+        return clean
 
     raw_tags  = metadata.get("tags", [])
     sanitized = sanitize_tags(raw_tags)
     print(f"   Tags: {len(raw_tags)} originais -> {len(sanitized)} aprovadas")
+    print(f"   Amostra: {sanitized[:5]}")
 
     # Body do request
     body = {
