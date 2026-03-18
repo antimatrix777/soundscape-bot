@@ -1,0 +1,48 @@
+name: 🎵 Comfort Sounds — Weekly Upload
+
+on:
+  schedule:
+    - cron: '0 13 * * 2'   # Terça-feira 10h BRT
+    - cron: '0 13 * * 5'   # Sexta-feira 10h BRT
+  workflow_dispatch:        # Permite rodar manualmente
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
+          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
+          PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
+          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
+          YT_TOKEN_B64:      ${{ secrets.YT_TOKEN_B64 }}
+        run: python run_pipeline.py
+
+      - name: Save upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.run_number }}
+          path: |
+            last_upload.json
+            metadata_*.json
+          if-no-files-found: ignore
+          retention-days: 30
