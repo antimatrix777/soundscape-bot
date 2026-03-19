@@ -33,6 +33,8 @@ jobs:
       - name: Run pipeline
         env:
           TOGETHER_API_KEY:  ${{ secrets.TOGETHER_API_KEY }}
+          FAL_API_KEY:        ${{ secrets.FAL_API_KEY }}
+          STABLE_HORDE_KEY:   ${{ secrets.STABLE_HORDE_KEY }}
           GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
           GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
