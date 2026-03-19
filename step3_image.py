@@ -1,15 +1,31 @@
-import os, json, glob, time, requests, urllib.parse, random, base64, io
+"""
+ETAPA 3 — Gerador de Imagem IA + Thumbnail
+Cascade com 6 fontes, 3 tentativas cada antes de pular para a proxima.
+
+Ordem:
+  1. Together AI FLUX.1   (melhor qualidade estetica)
+  2. fal.ai FLUX Schnell  (rapido, creditos gratis no cadastro)
+  3. Gemini Imagen 3      (500/dia gratis)
+  4. Stable Horde         (crowdsourced, gratis)
+  5. Pollinations         (sem key, gratuito)
+  6. Pexels / Pixabay     (foto real, fallback final)
+"""
+import os, json, glob, time, requests, urllib.parse, random, base64
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
 from io import BytesIO
 from dotenv import load_dotenv
 
 load_dotenv()
 
-PEXELS_KEY  = os.environ.get("PEXELS_API_KEY", "")
-PIXABAY_KEY = os.environ.get("PIXABAY_API_KEY", "")
-GEMINI_KEY  = os.environ.get("GEMINI_API_KEY", "")
+TOGETHER_KEY     = os.environ.get("TOGETHER_API_KEY", "")
+FAL_KEY          = os.environ.get("FAL_API_KEY", "")
+GEMINI_KEY       = os.environ.get("GEMINI_API_KEY", "")
+STABLE_HORDE_KEY = os.environ.get("STABLE_HORDE_KEY", "0000000000")
+PEXELS_KEY       = os.environ.get("PEXELS_API_KEY", "")
+PIXABAY_KEY      = os.environ.get("PIXABAY_API_KEY", "")
 
 CHANNEL_NAME = "Comfort Sounds"
+MAX_RETRIES  = 3  # tentativas por fonte antes de pular
 
 STYLE_BASE = (
     "lofi illustration, cozy night scene, warm amber lamp light, "
@@ -67,128 +83,220 @@ CATEGORY_PROMPTS = {
 }
 
 
+def retry(fn, name, *args, retries=MAX_RETRIES, **kwargs):
+    """Tenta uma funcao até MAX_RETRIES vezes antes de lancar excecao."""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"   [{name}] Tentativa {attempt}/{retries}...")
+            result = fn(*args, attempt=attempt, **kwargs)
+            print(f"   [{name}] OK na tentativa {attempt}")
+            return result
+        except Exception as e:
+            last_error = e
+            print(f"   [{name}] Tentativa {attempt} falhou: {e}")
+            if attempt < retries:
+                time.sleep(3 * attempt)  # espera progressiva: 3s, 6s, 9s
+    raise RuntimeError(f"{name} falhou em {retries} tentativas. Ultimo erro: {last_error}")
+
+
 # ══════════════════════════════════════════════════════════
-# FONTE 1: TOGETHER AI — FLUX.1 Schnell (melhor qualidade estetica)
-# api.together.ai → cria conta gratis, sem cartao de credito
-# 3 meses ilimitado gratis com FLUX.1 Schnell
-# Adicione TOGETHER_API_KEY nos GitHub Secrets
+# FONTE 1: TOGETHER AI — FLUX.1 Schnell (melhor estetica)
+# api.together.ai → cadastro gratis, sem cartao
 # ══════════════════════════════════════════════════════════
-def generate_with_together(prompt, width=1024, height=1024):
-    key = os.environ.get("TOGETHER_API_KEY", "")
-    if not key:
+def _together(prompt, attempt=1, **kw):
+    if not TOGETHER_KEY:
         raise ValueError("TOGETHER_API_KEY nao configurada")
-    print(f"   [Together AI FLUX.1] Gerando...")
+    seed = int(time.time()) + attempt * 100
     r = requests.post(
         "https://api.together.xyz/v1/images/generations",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {TOGETHER_KEY}", "Content-Type": "application/json"},
         json={
             "model":  "black-forest-labs/FLUX.1-schnell-Free",
-            "prompt": prompt,
-            "width":  width,
-            "height": height,
-            "steps":  4,
-            "n":      1,
+            "prompt": prompt[:900],
+            "width":  1024, "height": 1024,
+            "steps":  4, "n": 1, "seed": seed,
         },
-        timeout=120,
+        timeout=90,
     )
     r.raise_for_status()
-    data = r.json()
-    # Resposta pode ser URL ou base64
-    item = data.get("data", [{}])[0]
+    item = r.json().get("data", [{}])[0]
     if item.get("url"):
         img_r = requests.get(item["url"], timeout=60)
-        img   = Image.open(BytesIO(img_r.content)).convert("RGB")
+        return Image.open(BytesIO(img_r.content)).convert("RGB")
     elif item.get("b64_json"):
-        img = Image.open(BytesIO(base64.b64decode(item["b64_json"]))).convert("RGB")
-    else:
-        raise RuntimeError("Together AI: sem imagem na resposta")
-    print(f"   -> Together AI: {img.width}x{img.height}")
-    return img
+        return Image.open(BytesIO(base64.b64decode(item["b64_json"]))).convert("RGB")
+    raise RuntimeError("Together AI: sem imagem na resposta")
 
 
 # ══════════════════════════════════════════════════════════
-# FONTE 2: GEMINI IMAGE API — 500 imagens/dia gratis
+# FONTE 2: FAL.AI — FLUX Schnell (rapido, creditos gratis)
+# fal.ai → cadastro gratis, creditos no signup
+# Adicione FAL_API_KEY nos GitHub Secrets
+# ══════════════════════════════════════════════════════════
+def _fal(prompt, attempt=1, **kw):
+    if not FAL_KEY:
+        raise ValueError("FAL_API_KEY nao configurada")
+    seed = int(time.time()) + attempt * 200
+    r = requests.post(
+        "https://fal.run/fal-ai/flux/schnell",
+        headers={"Authorization": f"Key {FAL_KEY}", "Content-Type": "application/json"},
+        json={
+            "prompt":      prompt[:900],
+            "image_size":  "landscape_16_9",
+            "num_images":  1,
+            "num_inference_steps": 4,
+            "seed":        seed,
+        },
+        timeout=90,
+    )
+    r.raise_for_status()
+    images = r.json().get("images", [])
+    if not images:
+        raise RuntimeError("fal.ai: sem imagens na resposta")
+    url = images[0].get("url")
+    if not url:
+        raise RuntimeError("fal.ai: sem URL na resposta")
+    img_r = requests.get(url, timeout=60)
+    return Image.open(BytesIO(img_r.content)).convert("RGB")
+
+
+# ══════════════════════════════════════════════════════════
+# FONTE 3: GEMINI IMAGEN — 500 imagens/dia gratis
 # Usa a GEMINI_API_KEY que voce ja tem configurada
 # ══════════════════════════════════════════════════════════
-def generate_with_gemini(prompt, width=1024, height=1024):
+def _gemini(prompt, attempt=1, **kw):
     if not GEMINI_KEY:
         raise ValueError("GEMINI_API_KEY nao configurada")
-    print(f"   [Gemini Imagen] Gerando...")
-    # Tenta Imagen 3 primeiro, depois flash com imagem
-    endpoints = [
-        f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={GEMINI_KEY}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key={GEMINI_KEY}",
-        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}",
-    ]
-    # Imagen 3 payload
-    imagen_payload = {
-        "instances": [{"prompt": prompt[:900]}],
-        "parameters": {"sampleCount": 1, "aspectRatio": "16:9"}
-    }
+    # Tenta Imagen 3 primeiro
+    imagen_url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={GEMINI_KEY}"
     try:
-        r = requests.post(endpoints[0], json=imagen_payload, timeout=90)
+        r = requests.post(imagen_url, json={
+            "instances":  [{"prompt": prompt[:900]}],
+            "parameters": {"sampleCount": 1, "aspectRatio": "16:9"},
+        }, timeout=90)
         if r.status_code == 200:
-            data = r.json()
-            predictions = data.get("predictions", [])
+            predictions = r.json().get("predictions", [])
             if predictions and predictions[0].get("bytesBase64Encoded"):
-                img_data = base64.b64decode(predictions[0]["bytesBase64Encoded"])
-                img = Image.open(BytesIO(img_data)).convert("RGB")
-                print(f"   -> Gemini Imagen3: {img.width}x{img.height}")
-                return img
+                data = base64.b64decode(predictions[0]["bytesBase64Encoded"])
+                return Image.open(BytesIO(data)).convert("RGB")
     except Exception as e:
         print(f"   Imagen3 falhou: {e}")
-    # Flash com imagem payload
-    flash_payload = {
-        "contents": [{"parts": [{"text": prompt[:900]}]}],
-        "generationConfig": {"responseModalities": ["IMAGE","TEXT"]}
-    }
-    for ep in endpoints[1:]:
+
+    # Fallback para gemini flash com imagem
+    for model in ["gemini-2.0-flash-exp-image-generation", "gemini-2.0-flash"]:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
         try:
-            r = requests.post(ep, json=flash_payload, timeout=90)
+            r = requests.post(url, json={
+                "contents": [{"parts": [{"text": prompt[:900]}]}],
+                "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
+            }, timeout=90)
             if r.status_code == 200:
-                data = r.json()
-                for candidate in data.get("candidates", []):
+                for candidate in r.json().get("candidates", []):
                     for part in candidate.get("content", {}).get("parts", []):
                         if "inlineData" in part:
-                            img_data = base64.b64decode(part["inlineData"]["data"])
-                            img = Image.open(BytesIO(img_data)).convert("RGB")
-                            print(f"   -> Gemini Flash: {img.width}x{img.height}")
-                            return img
+                            data = base64.b64decode(part["inlineData"]["data"])
+                            return Image.open(BytesIO(data)).convert("RGB")
         except Exception as e:
-            print(f"   Flash endpoint falhou: {e}")
+            print(f"   {model} falhou: {e}")
+
     raise RuntimeError("Gemini: nenhum endpoint retornou imagem")
 
 
 # ══════════════════════════════════════════════════════════
-# FONTE 2: POLLINATIONS.AI — gratis, sem API key
+# FONTE 4: STABLE HORDE — crowdsourced, 100% gratis
+# stablehorde.net/register → key gratis com prioridade
+# Key anonima "0000000000" funciona sem registro (fila lenta)
 # ══════════════════════════════════════════════════════════
-def generate_with_pollinations(prompt, width=1920, height=1080, attempt=0):
-    print(f"   [Pollinations] Gerando (tentativa {attempt+1})...")
-    seed = int(time.time()) + attempt * 1000
-    encoded = urllib.parse.quote(prompt)
+def _stable_horde(prompt, attempt=1, **kw):
+    headers = {
+        "apikey":       STABLE_HORDE_KEY,
+        "Content-Type": "application/json",
+        "Client-Agent": "comfort-sounds-bot:1.0:github",
+    }
+    r = requests.post(
+        "https://stablehorde.net/api/v2/generate/async",
+        headers=headers,
+        json={
+            "prompt": prompt[:900] + " ### ugly, text, watermark, blurry, nsfw",
+            "params": {
+                "sampler_name": "k_euler_a",
+                "cfg_scale": 7.5,
+                "steps": 25,
+                "width": 1024, "height": 1024,
+                "n": 1, "karras": True,
+            },
+            "models": ["Deliberate", "DreamShaper", "Realistic Vision"],
+            "r2": True, "shared": False, "slow_workers": True,
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    job_id = r.json().get("id")
+    if not job_id:
+        raise RuntimeError("Stable Horde: sem job ID")
+
+    print(f"   Job ID: {job_id} | Aguardando fila...")
+    for _ in range(23):  # max ~3 min (23 x 8s)
+        time.sleep(8)
+        check = requests.get(
+            f"https://stablehorde.net/api/v2/generate/check/{job_id}",
+            headers=headers, timeout=20,
+        )
+        status = check.json()
+        print(f"   Fila: {status.get('queue_position','?')} | Espera: {status.get('wait_time',0)}s")
+        if status.get("done"):
+            break
+    else:
+        try:
+            requests.delete(f"https://stablehorde.net/api/v2/generate/status/{job_id}",
+                            headers=headers, timeout=10)
+        except:
+            pass
+        raise RuntimeError("Stable Horde: timeout")
+
+    result = requests.get(
+        f"https://stablehorde.net/api/v2/generate/status/{job_id}",
+        headers=headers, timeout=30,
+    )
+    generations = result.json().get("generations", [])
+    if not generations:
+        raise RuntimeError("Stable Horde: sem imagens")
+    img_str = generations[0].get("img", "")
+    if img_str.startswith("http"):
+        img_r = requests.get(img_str, timeout=60)
+        return Image.open(BytesIO(img_r.content)).convert("RGB")
+    elif img_str:
+        return Image.open(BytesIO(base64.b64decode(img_str))).convert("RGB")
+    raise RuntimeError("Stable Horde: formato inesperado")
+
+
+# ══════════════════════════════════════════════════════════
+# FONTE 5: POLLINATIONS — sem API key, gratuito
+# ══════════════════════════════════════════════════════════
+def _pollinations(prompt, attempt=1, **kw):
+    seed = int(time.time()) + attempt * 300
+    encoded = urllib.parse.quote(prompt[:800])
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
-        f"?width={width}&height={height}"
-        f"&seed={seed}&nologo=true&enhance=true&model=flux"
+        f"?width=1920&height=1080&seed={seed}&nologo=true&enhance=true&model=flux"
     )
     r = requests.get(url, timeout=120)
     r.raise_for_status()
     if "image" not in r.headers.get("content-type", ""):
-        raise RuntimeError("Pollinations nao retornou imagem")
+        raise RuntimeError("Pollinations: nao retornou imagem")
     img = Image.open(BytesIO(r.content)).convert("RGB")
-    if img.width < 100 or img.height < 100:
-        raise RuntimeError("Imagem muito pequena")
-    print(f"   -> Pollinations: {img.width}x{img.height}")
+    if img.width < 100:
+        raise RuntimeError("Pollinations: imagem invalida")
     return img
 
 
 # ══════════════════════════════════════════════════════════
-# FONTE 3: PEXELS — foto real, fallback
+# FONTES 6A e 6B: PEXELS e PIXABAY — fotos reais, fallback final
 # ══════════════════════════════════════════════════════════
-def search_pexels(query):
+def _pexels_photo(query):
     if not PEXELS_KEY:
         raise ValueError("PEXELS_API_KEY nao configurada")
-    print(f"   [Pexels] '{query}'")
     r = requests.get(
         "https://api.pexels.com/v1/search",
         headers={"Authorization": PEXELS_KEY},
@@ -198,19 +306,14 @@ def search_pexels(query):
     r.raise_for_status()
     photos = r.json().get("photos", [])
     if not photos:
-        raise RuntimeError(f"Pexels: nenhuma foto para '{query}'")
+        raise RuntimeError(f"Pexels: sem fotos para '{query}'")
     best = max(photos, key=lambda p: p["width"] * p["height"])
-    print(f"   -> Pexels: {best['width']}x{best['height']}")
-    return best["src"]["original"]
+    img_r = requests.get(best["src"]["original"], timeout=60)
+    return Image.open(BytesIO(img_r.content)).convert("RGB")
 
-
-# ══════════════════════════════════════════════════════════
-# FONTE 4: PIXABAY — foto real, fallback final
-# ══════════════════════════════════════════════════════════
-def search_pixabay(query):
+def _pixabay_photo(query):
     if not PIXABAY_KEY:
         raise ValueError("PIXABAY_API_KEY nao configurada")
-    print(f"   [Pixabay] '{query}'")
     r = requests.get("https://pixabay.com/api/", params={
         "key": PIXABAY_KEY, "q": query, "image_type": "photo",
         "orientation": "horizontal", "min_width": 1920,
@@ -219,17 +322,11 @@ def search_pixabay(query):
     r.raise_for_status()
     hits = r.json().get("hits", [])
     if not hits:
-        raise RuntimeError(f"Pixabay: nenhuma imagem para '{query}'")
-    best = max(hits, key=lambda h: h.get("imageWidth", 0) * h.get("imageHeight", 0))
+        raise RuntimeError(f"Pixabay: sem imagens para '{query}'")
+    best = max(hits, key=lambda h: h.get("imageWidth", 0))
     url = best.get("largeImageURL") or best.get("webformatURL")
-    print(f"   -> Pixabay: {best.get('imageWidth')}x{best.get('imageHeight')}")
-    return url
-
-
-def download_image(url):
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    return Image.open(BytesIO(r.content)).convert("RGB")
+    img_r = requests.get(url, timeout=60)
+    return Image.open(BytesIO(img_r.content)).convert("RGB")
 
 
 # ══════════════════════════════════════════════════════════
@@ -238,22 +335,19 @@ def download_image(url):
 def make_background(img, output="background.jpg"):
     W, H = 1920, 1080
     ratio = max(W / img.width, H / img.height)
-    new_w, new_h = int(img.width * ratio), int(img.height * ratio)
-    img = img.resize((new_w, new_h), Image.LANCZOS)
-    left = (new_w - W) // 2
-    top  = (new_h - H) // 2
-    img  = img.crop((left, top, left + W, top + H))
-    img  = ImageEnhance.Brightness(img).enhance(0.82)
-    vignette = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(vignette)
+    nw, nh = int(img.width * ratio), int(img.height * ratio)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    left, top = (nw - W) // 2, (nh - H) // 2
+    img = img.crop((left, top, left + W, top + H))
+    img = ImageEnhance.Brightness(img).enhance(0.82)
+    vig = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(vig)
     for i in range(180):
-        alpha = int((i / 180) * 100)
-        draw.rectangle([i, i, W - i, H - i], outline=(0, 0, 0, alpha))
-    img = Image.alpha_composite(img.convert("RGBA"), vignette).convert("RGB")
+        d.rectangle([i, i, W - i, H - i], outline=(0, 0, 0, int(i / 180 * 100)))
+    img = Image.alpha_composite(img.convert("RGBA"), vig).convert("RGB")
     img.save(output, "JPEG", quality=95)
     print(f"   Background: {output}")
     return img
-
 
 def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg"):
     W, H = 1280, 720
@@ -262,83 +356,73 @@ def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg"):
     mask = Image.new("L", (W, H), 255)
     d = ImageDraw.Draw(mask)
     for i in range(60):
-        alpha = int(255 * (i / 60))
-        d.rectangle([i, i, W - i, H - i], fill=alpha)
+        d.rectangle([i, i, W - i, H - i], fill=int(255 * i / 60))
     img = Image.composite(img, blur, mask)
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d2 = ImageDraw.Draw(overlay)
+    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d2 = ImageDraw.Draw(ov)
     for i in range(H // 2):
-        alpha = int((i / (H // 2)) * 190)
-        d2.rectangle([(0, H // 2 + i), (W, H // 2 + i + 1)], fill=(0, 0, 0, alpha))
-    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        d2.rectangle([(0, H // 2 + i), (W, H // 2 + i + 1)],
+                     fill=(0, 0, 0, int(i / (H // 2) * 190)))
+    img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     def get_font(size):
-        paths = [
+        for p in [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        ]
-        for p in paths:
+        ]:
             if os.path.exists(p):
                 try: return ImageFont.truetype(p, size)
                 except: pass
         return ImageFont.load_default()
 
-    font_main = get_font(72)
-    font_sub  = get_font(28)
+    fm, fs = get_font(72), get_font(28)
     text = thumb_text.upper()
-    draw.text((W // 2 + 3, H - 160 + 3), text, font=font_main, fill=(0, 0, 0, 200), anchor="mm")
-    draw.text((W // 2, H - 160), text, font=font_main, fill=(255, 255, 255), anchor="mm")
-    draw.text((W - 24, H - 24), CHANNEL_NAME, font=font_sub, fill=(200, 200, 200), anchor="rb")
+    draw.text((W // 2 + 3, H - 160 + 3), text, font=fm, fill=(0, 0, 0, 200), anchor="mm")
+    draw.text((W // 2, H - 160), text, font=fm, fill=(255, 255, 255), anchor="mm")
+    draw.text((W - 24, H - 24), CHANNEL_NAME, font=fs, fill=(200, 200, 200), anchor="rb")
     draw.ellipse([(20, 20), (28, 28)], fill=(255, 180, 50))
     img.save(output, "JPEG", quality=93)
-    kb = os.path.getsize(output) / 1024
-    print(f"   Thumbnail: {output} ({kb:.0f}KB)")
+    print(f"   Thumbnail: {output} ({os.path.getsize(output)//1024}KB)")
     return img
 
 
 # ══════════════════════════════════════════════════════════
-# CASCADE — 4 fontes em ordem
-# Gemini → Pollinations → Pexels → Pixabay
+# CASCADE — 6 fontes, 3 tentativas cada
 # ══════════════════════════════════════════════════════════
 def get_image(category, pexels_query):
-    prompts = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["cozy"])
-    prompt  = random.choice(prompts)
+    prompt = random.choice(CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["cozy"]))
 
-    # 1. Together AI FLUX.1 Schnell (melhor qualidade estetica)
-    try:
-        img = generate_with_together(prompt)
-        return img, "together_flux"
-    except Exception as e:
-        print(f"   Together AI falhou: {e}")
+    ai_sources = [
+        ("Together AI FLUX.1", _together),
+        ("fal.ai FLUX",        _fal),
+        ("Gemini Imagen",      _gemini),
+        ("Stable Horde",       _stable_horde),
+        ("Pollinations",       _pollinations),
+    ]
 
-    # 2. Gemini Image (500/dia gratis, ja tem a key)
-    try:
-        img = generate_with_gemini(prompt)
-        return img, "gemini"
-    except Exception as e:
-        print(f"   Gemini falhou: {e}")
-
-    # 3. Pollinations (sem key, gratuito)
-    for attempt in range(2):
+    for name, fn in ai_sources:
         try:
-            img = generate_with_pollinations(prompt, attempt=attempt)
-            return img, "pollinations"
+            img = retry(fn, name, prompt)
+            return img, name
         except Exception as e:
-            print(f"   Pollinations tentativa {attempt+1} falhou: {e}")
-            time.sleep(3)
+            print(f"   {name} esgotou tentativas: {e}")
 
-    # 4. Pexels (foto real)
-    try:
-        url = search_pexels(pexels_query)
-        return download_image(url), "pexels"
-    except Exception as e:
-        print(f"   Pexels falhou: {e}")
+    # Fallback fotos reais — sem retry (geralmente confiavel)
+    print("   Todas as IAs falharam — usando foto real")
+    for photo_name, photo_fn, photo_arg in [
+        ("Pexels",   _pexels_photo,   pexels_query),
+        ("Pixabay",  _pixabay_photo,  pexels_query),
+    ]:
+        try:
+            print(f"   [{photo_name}] Buscando foto...")
+            img = photo_fn(photo_arg)
+            return img, photo_name
+        except Exception as e:
+            print(f"   {photo_name} falhou: {e}")
 
-    # 5. Pixabay (foto real, fallback final)
-    url = search_pixabay(pexels_query)
-    return download_image(url), "pixabay"
+    raise RuntimeError("ERRO CRITICO: todas as 6 fontes de imagem falharam")
 
 
 # ══════════════════════════════════════════════════════════
@@ -355,11 +439,11 @@ def main():
     thumb_text = metadata.get("thumbnail_text", "Comfort Sounds")
     pexels_q   = metadata.get("theme_data", {}).get("pexels", metadata.get("theme", "cozy ambience"))
 
-    print(f"\nGerando imagem: categoria={category}")
-    print(f"Thumbnail text: {thumb_text}")
+    print(f"\nGerando imagem: {category}")
+    print(f"Thumbnail: {thumb_text}")
 
     img, source = get_image(category, pexels_q)
-    print(f"   Fonte usada: {source}")
+    print(f"\nFonte usada: {source} | Tamanho: {img.width}x{img.height}")
 
     bg = make_background(img, "background.jpg")
     make_thumbnail(bg, thumb_text, "thumbnail.jpg")
