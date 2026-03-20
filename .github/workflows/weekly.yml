@@ -2,7 +2,7 @@ name: 🎵 Comfort Sounds — Weekly Upload
 
 on:
   schedule:
-    - cron: '0 13 * * 2'   # Terça-feira 10h BRT
+    - cron: '0 13 * * 2'   # Terca-feira 10h BRT
     - cron: '0 13 * * 5'   # Sexta-feira 10h BRT
   workflow_dispatch:
 
@@ -10,6 +10,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -33,8 +36,8 @@ jobs:
       - name: Run pipeline
         env:
           TOGETHER_API_KEY:  ${{ secrets.TOGETHER_API_KEY }}
-          FAL_API_KEY:        ${{ secrets.FAL_API_KEY }}
-          STABLE_HORDE_KEY:   ${{ secrets.STABLE_HORDE_KEY }}
+          FAL_API_KEY:       ${{ secrets.FAL_API_KEY }}
+          STABLE_HORDE_KEY:  ${{ secrets.STABLE_HORDE_KEY }}
           GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
           GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
@@ -45,13 +48,11 @@ jobs:
           YT_TOKEN_B64:      ${{ secrets.YT_TOKEN_B64 }}
         run: python run_pipeline.py
 
-      - name: Save upload log
+      - name: Save logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: log-${{ github.run_number }}
-          path: |
-            last_upload.json
-            metadata_*.json
+          path: last_upload.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 90
