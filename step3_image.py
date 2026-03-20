@@ -226,7 +226,7 @@ def _stable_horde(prompt, attempt=1, **kw):
                 "width": 1024, "height": 1024,
                 "n": 1, "karras": True,
             },
-            "models": ["Deliberate", "DreamShaper", "Realistic Vision"],
+            # No fixed models — let Horde pick the best available worker
             "r2": True, "shared": False, "slow_workers": True,
         },
         timeout=30,
@@ -275,8 +275,9 @@ def _stable_horde(prompt, attempt=1, **kw):
 # FONTE 5: POLLINATIONS — sem API key, gratuito
 # ══════════════════════════════════════════════════════════
 def _pollinations(prompt, attempt=1, **kw):
+    # FIX: Pollinations becomes URL — long prompts cause 500 errors
     seed = int(time.time()) + attempt * 300
-    encoded = urllib.parse.quote(prompt[:800])
+    encoded = urllib.parse.quote(prompt[:350])
     url = (
         f"https://image.pollinations.ai/prompt/{encoded}"
         f"?width=1920&height=1080&seed={seed}&nologo=true&enhance=true&model=flux"
@@ -377,8 +378,21 @@ def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg"):
                 except: pass
         return ImageFont.load_default()
 
-    fm, fs = get_font(72), get_font(28)
+    fs = get_font(28)
     text = thumb_text.upper()
+    # FIX: auto-fit font size so text never overflows thumbnail
+    font_size = 72
+    fm = get_font(font_size)
+    while font_size > 24:
+        try:
+            bbox = draw.textbbox((0, 0), text, font=fm)
+            text_w = bbox[2] - bbox[0]
+        except Exception:
+            text_w = len(text) * font_size * 0.6
+        if text_w <= W * 0.80:
+            break
+        font_size -= 4
+        fm = get_font(font_size)
     draw.text((W // 2 + 3, H - 160 + 3), text, font=fm, fill=(0, 0, 0, 200), anchor="mm")
     draw.text((W // 2, H - 160), text, font=fm, fill=(255, 255, 255), anchor="mm")
     draw.text((W - 24, H - 24), CHANNEL_NAME, font=fs, fill=(200, 200, 200), anchor="rb")
