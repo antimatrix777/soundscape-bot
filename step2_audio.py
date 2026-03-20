@@ -327,15 +327,20 @@ def build_from_ccmixter(query, duration_hours):
 # FONTE 6: NUMPY — ruidos de foco (gerado localmente)
 # ══════════════════════════════════════════════════════════
 def generate_brown_noise(duration_ms):
+    """FIX: pseudo-stereo — L and R channels with slightly different seeds."""
     import numpy as np
     n = int(SAMPLE_RATE * duration_ms / 1000)
-    white = np.random.normal(0, 1, n)
-    brown = np.cumsum(white)
-    brown -= np.mean(brown)
-    brown /= (np.max(np.abs(brown)) + 1e-8)
-    brown *= 0.5
-    return AudioSegment((brown * 32767).astype(np.int16).tobytes(),
-                        frame_rate=SAMPLE_RATE, sample_width=2, channels=1)
+    def _brown(seed_offset=0):
+        rng   = np.random.default_rng(int(duration_ms) + seed_offset)
+        white = rng.normal(0, 1, n)
+        b     = np.cumsum(white)
+        b    -= np.mean(b)
+        b    /= (np.max(np.abs(b)) + 1e-8)
+        return (b * 0.5 * 32767).astype(np.int16)
+    L = _brown(0)
+    R = _brown(7)  # slightly different — creates natural stereo width
+    stereo = np.column_stack([L, R]).flatten()
+    return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
 
 def generate_white_noise(duration_ms):
     import numpy as np
@@ -398,7 +403,9 @@ def _process_and_loop(files, duration_hours, channels=1):
     i = 0
     while len(combined) < target_ms:
         seg = segments[i % len(segments)]
-        combined = combined.append(seg, crossfade=CROSSFADE_MS) if len(combined) > 0 else combined + seg
+        # FIX: dynamic crossfade — never more than 25% of segment length
+        safe_crossfade = min(CROSSFADE_MS, len(seg) // 4)
+        combined = combined.append(seg, crossfade=safe_crossfade) if len(combined) > 0 else combined + seg
         i += 1
         if i % 5 == 0:
             print(f"   {min(100, len(combined)/target_ms*100):.0f}% ({len(combined)//60000}min)")
