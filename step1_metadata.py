@@ -1,13 +1,7 @@
 """
-ETAPA 1 — Gerador de Metadata com 3 provedores em cascata
-══════════════════════════════════════════════════════════
-Tenta os provedores nesta ordem até um funcionar:
-
-  1. Groq      — Llama 3.3 70B (grátis, sem cartão, o mais rápido)
-  2. Mistral   — Mistral Small (grátis, 1B tokens/mês)
-  3. Gemini    — Gemini 1.5 Flash (grátis, fallback final)
-
-Se todos falharem, salva metadata básico para não travar o pipeline.
+STEP 1 — Metadata Generator (3-provider cascade)
+Providers: Groq → Mistral → Gemini → fallback
+All content in English for maximum CPM reach.
 """
 import json, os, random, argparse, re
 from datetime import datetime
@@ -82,39 +76,169 @@ THEMES = {
     ],
 }
 
+# ─────────────────────────────────────────────────────────
+# SERIES COUNTER — tracks volume per category for series titles
+# ─────────────────────────────────────────────────────────
+SERIES_FILE = "series_counter.json"
+
+def get_series_number(category):
+    counters = {}
+    if os.path.exists(SERIES_FILE):
+        try:
+            with open(SERIES_FILE) as f:
+                counters = json.load(f)
+        except Exception:
+            counters = {}
+    counters[category] = counters.get(category, 0) + 1
+    with open(SERIES_FILE, "w") as f:
+        json.dump(counters, f)
+    return counters[category]
+
+# ─────────────────────────────────────────────────────────
+# USED THEMES TRACKER — avoids repeating themes
+# ─────────────────────────────────────────────────────────
+USED_THEMES_FILE = "used_themes.json"
+
+def get_used_themes():
+    if os.path.exists(USED_THEMES_FILE):
+        try:
+            with open(USED_THEMES_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def mark_theme_used(theme_name):
+    used = get_used_themes()
+    all_themes = [t["theme"] for cat in THEMES.values() for t in cat]
+    used.append(theme_name)
+    # Reset when all themes have been used
+    if len(used) >= len(all_themes):
+        used = [theme_name]
+    with open(USED_THEMES_FILE, "w") as f:
+        json.dump(used, f)
+
+# ─────────────────────────────────────────────────────────
+# HASHTAGS PER CATEGORY
+# ─────────────────────────────────────────────────────────
+CATEGORY_HASHTAGS = {
+    "rain":        "#rainysounds #sleepsounds #rainambience",
+    "nature":      "#naturesounds #ambientmusic #relaxingsounds",
+    "cozy":        "#cozysounds #cafeambience #lofi",
+    "jazz":        "#jazzmusic #instrumentaljazz #jazzambience",
+    "focus_noise": "#brownnoise #whitenoise #focusmusic",
+    "study":       "#studymusic #focussounds #lofi",
+    "urban":       "#cityambience #urbansounds #nightambience",
+}
+
+# ─────────────────────────────────────────────────────────
+# CREATIVE FALLBACK TITLES — varied, not generic
+# ─────────────────────────────────────────────────────────
+FALLBACK_TITLES = {
+    "rain": [
+        "It's Raining Outside • {dur}",
+        "Rain at 2AM • Sleep & Focus • {dur}",
+        "The Rain Won't Stop • {dur} Lofi Ambience",
+        "Gentle Rain All Night Long • {dur}",
+    ],
+    "nature": [
+        "Deep in the Forest • {dur} Nature Ambience",
+        "The River Never Stops • {dur}",
+        "Nature at Dawn • {dur} Relaxing Ambience",
+        "Somewhere in the Woods • {dur}",
+    ],
+    "cozy": [
+        "A Corner of the Cafe • {dur}",
+        "Stay In Tonight • {dur} Cozy Ambience",
+        "The Fireplace is On • {dur}",
+        "Quiet Evening Indoors • {dur} Cozy Sounds",
+    ],
+    "jazz": [
+        "Late Night at the Jazz Club • {dur}",
+        "One More Song • {dur} Jazz Ambience",
+        "Smooth Jazz for a Slow Evening • {dur}",
+        "The Piano Plays On • {dur} Jazz Lounge",
+    ],
+    "focus_noise": [
+        "Brown Noise for Deep Work • {dur}",
+        "Block Everything Out • {dur} Focus Noise",
+        "Pure Concentration • {dur} Brown Noise",
+        "White Noise All Night • {dur} Sleep Aid",
+    ],
+    "study": [
+        "Late Night Study Session • {dur}",
+        "Focus Mode: On • {dur} Study Ambience",
+        "The Library at Midnight • {dur}",
+        "One More Chapter • {dur} Study Sounds",
+    ],
+    "urban": [
+        "Tokyo at 3AM • {dur} Night Ambience",
+        "The City Never Sleeps • {dur}",
+        "Rain on the Streets • {dur} Urban Sounds",
+        "Night Drive • {dur} City Ambience",
+    ],
+}
+
 CATEGORY_CONTEXT = {
     "rain":        ("sleep, relaxation, and stress relief",      "rain sounds, sleep sounds, relaxing rain"),
     "nature":      ("relaxation, meditation, and mindfulness",   "nature sounds, calming nature, ambient sounds"),
     "cozy":        ("relaxation, focus, and cozy comfort",       "cozy ambience, cafe sounds, background noise"),
     "jazz":        ("late night focus, relaxation, and mood",    "jazz music, instrumental jazz, background jazz"),
     "focus_noise": ("deep focus, studying, and sleep",           "brown noise, white noise, focus sounds"),
-    "study":       ("studying, concentration, and productivity", "study music, focus background, lo-fi ambience"),
+    "study":       ("studying, concentration, and productivity", "study music, focus background, lofi ambience"),
     "urban":       ("relaxation, mood, and urban comfort",       "city sounds, urban ambience, night sounds"),
 }
 
 SYSTEM_PROMPT = """You are a YouTube SEO specialist for a premium ambient/soundscape channel called 'Comfort Sounds'.
-Channel identity: warm, trustworthy, high-quality, peaceful. No clickbait, no ALL CAPS titles.
+Channel language: ENGLISH ONLY. All titles, descriptions and tags must be in English.
+Channel identity: warm, trustworthy, high-quality, peaceful. No clickbait, no ALL CAPS.
 Respond ONLY with valid JSON — no markdown, no code fences, no extra text."""
 
 
-def build_prompt(theme_data, category, duration_hours):
+def build_prompt(theme_data, category, duration_hours, series_num):
     audience, support_kw = CATEGORY_CONTEXT[category]
     dur_label = f"{duration_hours} Hours"
-    return f"""Generate YouTube metadata for a comfort soundscape channel.
+    hashtags  = CATEGORY_HASHTAGS[category]
+
+    return f"""Generate YouTube metadata for an English-language comfort soundscape channel.
 
 Theme: "{theme_data['theme']}"
 Category: {category}
 Duration: {duration_hours} hours
+Series number: Vol. {series_num}
 Target audience: {audience}
-Support keywords: {support_kw}
+Keywords to weave in: {support_kw}
 Channel name: Comfort Sounds
+Channel URL: https://www.youtube.com/@ComfortSounds
 
-Return ONLY this JSON (no markdown, no explanation):
+Rules for title:
+- Max 70 chars
+- Include "{dur_label}"
+- Include "Vol. {series_num}" at the end
+- Warm, inviting tone — NOT generic
+- Good example: "Heavy Rain on Window {dur_label} | Sleep & Relaxation • Vol. {series_num}"
+- Bad example: "RELAXING RAIN SOUNDS {dur_label}" (too generic, ALL CAPS)
+
+Rules for description:
+- 400-500 chars total
+- First 2 lines: strong hook (shown before "more")
+- Include 3-4 natural keyword mentions
+- Include timestamps: 0:00 Intro\n0:30 {theme_data['theme'].title()}\n[duration] Fade out
+- End with: 🔔 Subscribe for new soundscapes every week.\n🎧 More sounds → https://www.youtube.com/@ComfortSounds\n{hashtags}
+
+Rules for tags (return as JSON array of strings):
+- Generate exactly 25 individual tags
+- Each tag is a standalone phrase — do NOT use commas inside a tag
+- All lowercase
+- No hashtags, no special characters
+- Mix: exact match, broad, long-tail
+
+Return ONLY this JSON:
 {{
-  "title": "max 70 chars, include '{dur_label}', include main keyword, warm tone, no ALL CAPS",
-  "description": "400-500 chars, hook in first 2 lines, 3-4 keyword mentions, end with: Subscribe for new soundscapes every week.",
-  "tags": ["30 tags", "lowercase", "no hashtags", "mix broad and specific"],
-  "thumbnail_text": "max 5 words, warm and inviting, example: '{dur_label} of Rain'",
+  "title": "...",
+  "description": "...",
+  "tags": ["tag one", "tag two", "tag three"],
+  "thumbnail_text": "max 4 words, warm, example: '{dur_label} of Rain'",
   "youtube_category_id": "10"
 }}"""
 
@@ -130,65 +254,46 @@ def clean_json(raw: str) -> dict:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             return json.loads(m.group())
-        raise ValueError(f"JSON invalido:\n{raw[:300]}")
+        raise ValueError(f"Invalid JSON:\n{raw[:300]}")
 
 
-# ── PROVEDOR 1: GROQ ─────────────────────────────────────
-# console.groq.com → API Keys → Create API Key (sem cartão)
-def call_groq(prompt: str) -> str:
+def call_groq(prompt):
     import requests
     key = os.environ.get("GROQ_API_KEY", "")
-    if not key:
-        raise ValueError("GROQ_API_KEY nao configurada")
+    if not key: raise ValueError("GROQ_API_KEY not set")
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={
-            "model": "llama-3.3-70b-versatile",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": prompt},
-            ],
-            "temperature": 0.7,
-            "max_tokens": 1000,
-        },
+        json={"model": "llama-3.3-70b-versatile",
+              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                           {"role": "user", "content": prompt}],
+              "temperature": 0.7, "max_tokens": 1000},
         timeout=30,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
 
-# ── PROVEDOR 2: MISTRAL ───────────────────────────────────
-# console.mistral.ai → API Keys → Create new key (sem cartão)
-def call_mistral(prompt: str) -> str:
+def call_mistral(prompt):
     import requests
     key = os.environ.get("MISTRAL_API_KEY", "")
-    if not key:
-        raise ValueError("MISTRAL_API_KEY nao configurada")
+    if not key: raise ValueError("MISTRAL_API_KEY not set")
     r = requests.post(
         "https://api.mistral.ai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={
-            "model": "mistral-small-latest",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": prompt},
-            ],
-            "temperature": 0.7,
-            "max_tokens": 1000,
-        },
+        json={"model": "mistral-small-latest",
+              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                           {"role": "user", "content": prompt}],
+              "temperature": 0.7, "max_tokens": 1000},
         timeout=30,
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
 
-# ── PROVEDOR 3: GEMINI ────────────────────────────────────
-# aistudio.google.com → Get API Key (sem cartão)
-def call_gemini(prompt: str) -> str:
+def call_gemini(prompt):
     key = os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise ValueError("GEMINI_API_KEY nao configurada")
+    if not key: raise ValueError("GEMINI_API_KEY not set")
     import google.generativeai as genai
     genai.configure(api_key=key)
     model = genai.GenerativeModel("gemini-1.5-flash")
@@ -196,64 +301,88 @@ def call_gemini(prompt: str) -> str:
     return response.text
 
 
-# ── CASCADE ───────────────────────────────────────────────
 PROVIDERS = [
     ("Groq Llama 3.3 70B", call_groq),
     ("Mistral Small",       call_mistral),
     ("Gemini 1.5 Flash",    call_gemini),
 ]
 
-def call_ai_cascade(prompt: str):
-    errors = []
+
+def call_ai_cascade(prompt):
     for name, fn in PROVIDERS:
         try:
-            print(f"   Tentando: {name}...")
-            raw = fn(prompt)
+            print(f"   Trying: {name}...")
+            raw    = fn(prompt)
             result = clean_json(raw)
+            # Validate tags are actual tags, not the example strings
+            tags = result.get("tags", [])
+            if tags and tags[0] in ("30 tags", "tag one", "lowercase"):
+                raise ValueError("Provider returned example tags instead of real ones")
             print(f"   OK: {name}")
             return result
         except Exception as e:
-            print(f"   Falhou {name}: {e}")
-            errors.append(f"{name}: {e}")
-    print(f"   Todos os provedores falharam. Usando fallback.")
+            print(f"   Failed {name}: {e}")
+    print("   All providers failed. Using fallback.")
     return None
 
 
-def build_fallback_metadata(theme_data, category, duration_hours):
-    dur = f"{duration_hours} Hours"
-    title_map = {
-        "rain":        f"Relaxing Rain Sounds {dur} | Sleep & Study",
-        "nature":      f"Nature Ambience {dur} | Relaxation & Meditation",
-        "cozy":        f"Cozy Ambience {dur} | Focus & Comfort",
-        "jazz":        f"Smooth Jazz {dur} | Relax & Focus",
-        "focus_noise": f"Brown Noise {dur} | Deep Focus & Concentration",
-        "study":       f"Study Ambience {dur} | Focus & Concentration",
-        "urban":       f"City Rain Ambience {dur} | Sleep & Relax",
-    }
+def build_fallback_metadata(theme_data, category, duration_hours, series_num):
+    dur       = f"{duration_hours} Hours"
+    titles    = FALLBACK_TITLES.get(category, ["Comfort Sounds {dur} | Relax & Focus"])
+    title_tpl = random.choice(titles)
+    title     = title_tpl.format(dur=dur) + f" • Vol. {series_num}"
+    hashtags  = CATEGORY_HASHTAGS[category]
     return {
-        "title":               title_map.get(category, f"Comfort Sounds {dur} | Relax & Focus"),
-        "description":         f"Relax and unwind with {duration_hours} hours of {theme_data['theme']}. Perfect for sleep, study, and focus. Subscribe for new soundscapes every week.",
-        "tags":                ["relaxing sounds","sleep sounds","ambient music","white noise","study music",
-                                "focus music","lofi","calm music","meditation","soundscape","sleep aid",
-                                "background music","cozy vibes","nature sounds","rain sounds","stress relief",
-                                "chillout","work from home","deep focus","concentration","peaceful","relax",
-                                "sleep meditation","ambient noise","comfort sounds","calming music","quiet",
-                                "night sounds","zen","instrumental"],
-        "thumbnail_text":      f"{dur} of {category.replace('_',' ').title()}",
+        "title": title[:100],
+        "description": (
+            f"Lose yourself in {duration_hours} hours of {theme_data['theme']}. "
+            f"Perfect for sleep, deep focus, and unwinding after a long day.\n\n"
+            f"0:00 Intro\n0:30 {theme_data['theme'].title()}\n\n"
+            f"🔔 Subscribe for new soundscapes every week.\n"
+            f"🎧 More sounds → https://www.youtube.com/@ComfortSounds\n"
+            f"{hashtags}"
+        ),
+        "tags": [
+            "relaxing sounds", "sleep sounds", "ambient music", "white noise",
+            "study music", "focus music", "lofi", "calm music", "meditation",
+            "soundscape", "sleep aid", "background music", "cozy vibes",
+            "nature sounds", "rain sounds", "stress relief", "chillout",
+            "work from home", "deep focus", "concentration", "peaceful",
+            "relax", "sleep meditation", "ambient noise", "comfort sounds",
+        ],
+        "thumbnail_text":      f"{dur} of {theme_data['theme'].split()[0].title()}",
         "youtube_category_id": "10",
         "_fallback":           True,
     }
 
 
 def pick_theme(theme_override=None, category=None):
+    """Picks a theme, avoiding recently used ones."""
     if category and category not in THEMES:
-        raise ValueError(f"Categoria invalida. Use: {list(THEMES.keys())}")
-    cat = category or random.choice(list(THEMES.keys()))
-    themes = THEMES[cat]
+        raise ValueError(f"Invalid category. Use: {list(THEMES.keys())}")
+
+    used = get_used_themes()
+
+    if category:
+        cat    = category
+        themes = THEMES[cat]
+    else:
+        # Pick directly from all themes (weighted by category size)
+        all_themes = [(t, cat) for cat, themes in THEMES.items() for t in themes]
+        unused     = [(t, c) for t, c in all_themes if t["theme"] not in used]
+        if not unused:
+            unused = all_themes  # reset if all used
+        chosen_theme, cat = random.choice(unused)
+        return chosen_theme, cat
+
     if theme_override:
         match = next((t for t in themes if theme_override.lower() in t["theme"].lower()), None)
         return (match or themes[0]), cat
-    return random.choice(themes), cat
+
+    unused = [t for t in themes if t["theme"] not in used]
+    if not unused:
+        unused = themes
+    return random.choice(unused), cat
 
 
 def generate_metadata(theme_override=None, duration_hours=None, category=None):
@@ -261,27 +390,33 @@ def generate_metadata(theme_override=None, duration_hours=None, category=None):
     if not duration_hours:
         duration_hours = random.choice(DURATIONS)
 
-    print(f"\nTema: {theme_data['theme']}")
-    print(f"Categoria: {category} | Duracao: {duration_hours}h")
+    series_num = get_series_number(category)
 
-    prompt   = build_prompt(theme_data, category, duration_hours)
+    print(f"\nTheme: {theme_data['theme']}")
+    print(f"Category: {category} | Duration: {duration_hours}h | Vol. {series_num}")
+
+    prompt   = build_prompt(theme_data, category, duration_hours, series_num)
     metadata = call_ai_cascade(prompt)
 
     if metadata is None:
-        metadata = build_fallback_metadata(theme_data, category, duration_hours)
+        metadata = build_fallback_metadata(theme_data, category, duration_hours, series_num)
 
     metadata["theme"]          = theme_data["theme"]
     metadata["theme_data"]     = theme_data
     metadata["category"]       = category
     metadata["duration_hours"] = duration_hours
+    metadata["series_num"]     = series_num
     metadata["generated_at"]   = datetime.now().isoformat()
+
+    # Mark theme as used
+    mark_theme_used(theme_data["theme"])
 
     fname = f"metadata_{theme_data['theme'][:30].replace(' ','_')}.json"
     with open(fname, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-    print(f"Titulo: {metadata.get('title','')}")
-    print(f"Tags: {len(metadata.get('tags', []))} | Salvo: {fname}\n")
+    print(f"Title: {metadata.get('title','')}")
+    print(f"Tags: {len(metadata.get('tags', []))} | Saved: {fname}\n")
     return metadata
 
 
