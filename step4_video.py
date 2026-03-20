@@ -1,14 +1,12 @@
 """
-ETAPA 4 — Montador de Vídeo (ffmpeg direto — GRÁTIS)
-Combina background.jpg + output_audio.mp3 → final_video.mp4
-Usa ffmpeg diretamente (mais rápido que MoviePy para imagem estática + áudio longo).
-Ken Burns (slow zoom) via filtro de vídeo do ffmpeg.
+STEP 4 — Video Assembler (ffmpeg)
+Combines background.jpg + output_audio.mp3 → final_video.mp4
+Ken Burns effect: smooth zoom at 24fps (not 1fps).
 """
 import subprocess, os, json, glob
 
 
 def get_audio_duration(audio_file):
-    """Retorna duração do áudio em segundos via ffprobe."""
     result = subprocess.run([
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", audio_file
@@ -24,31 +22,27 @@ def build_video(
     background="background.jpg",
     audio="output_audio.mp3",
     output="final_video.mp4",
-    ken_burns=True
+    ken_burns=True,
 ):
-    """
-    Monta o vídeo final com ffmpeg.
-    Ken Burns: zoom suave de 1.0x → 1.03x ao longo do vídeo.
-    """
     if not os.path.exists(background):
-        raise FileNotFoundError(f"Background não encontrado: {background}")
+        raise FileNotFoundError(f"Background not found: {background}")
     if not os.path.exists(audio):
-        raise FileNotFoundError(f"Áudio não encontrado: {audio}")
+        raise FileNotFoundError(f"Audio not found: {audio}")
 
     duration = get_audio_duration(audio)
-    print(f"\n🎬 Montando vídeo...")
-    print(f"   📷 Background: {background}")
-    print(f"   🎵 Áudio: {audio} ({duration/3600:.1f}h)")
+    print(f"\nAssembling video...")
+    print(f"   Background: {background}")
+    print(f"   Audio: {audio} ({duration/3600:.1f}h)")
 
     if ken_burns:
-        # Zoom suave: começa em 1.0x, termina em 1.03x
-        # zoompan: zoom de 1.0 a 1.03 ao longo de toda a duração
-        fps = 1  # 1 fps para imagem estática — economiza espaço
+        # FIX: 24fps for smooth zoom (was 1fps — looked choppy)
+        fps          = 24
         total_frames = int(duration * fps)
-        zoom_speed = 0.03 / total_frames  # incremento por frame
+        # Zoom from 1.0 to 1.03 over the entire video — smooth and subtle
+        zoom_speed   = 0.03 / total_frames
 
         vf = (
-            f"zoompan=z='min(zoom+{zoom_speed:.8f},1.03)':"
+            f"zoompan=z='min(zoom+{zoom_speed:.10f},1.03)':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d={total_frames}:s=1920x1080:fps={fps}"
         )
@@ -57,47 +51,46 @@ def build_video(
 
     cmd = [
         "ffmpeg", "-y",
-        "-loop", "1",              # imagem estática em loop
+        "-loop", "1",
         "-i", background,
         "-i", audio,
         "-vf", vf,
         "-c:v", "libx264",
-        "-preset", "ultrafast",    # prioriza velocidade no GitHub Actions
-        "-tune", "stillimage",     # otimizado para imagem estática
-        "-crf", "28",              # qualidade (18=lossless, 28=boa/compacta)
+        "-preset", "ultrafast",
+        "-tune", "stillimage",
+        "-crf", "23",              # FIX: was 28 — better visual quality
         "-c:a", "aac",
         "-b:a", "192k",
-        "-shortest",               # para quando o áudio terminar
-        "-pix_fmt", "yuv420p",     # compatibilidade máxima
-        "-movflags", "+faststart", # permite streaming antes do download completo
-        output
+        "-shortest",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        output,
     ]
 
-    print(f"   ⚙️  Processando (pode levar 5-15 minutos)...")
+    print("   Processing (this takes 10-20 minutes)...")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        print(f"❌ Erro no ffmpeg:\n{result.stderr[-2000:]}")
-        raise RuntimeError("ffmpeg falhou")
+        print(f"ffmpeg error:\n{result.stderr[-2000:]}")
+        raise RuntimeError("ffmpeg failed")
 
     size_mb = os.path.getsize(output) / (1024 * 1024)
-    print(f"✅ Vídeo gerado: {output} ({size_mb:.0f}MB)")
+    print(f"   Done: {output} ({size_mb:.0f}MB)")
     return output
 
 
 def main():
     meta_files = sorted(glob.glob("metadata_*.json"), key=os.path.getmtime, reverse=True)
     if not meta_files:
-        raise FileNotFoundError("Rode step1_metadata.py primeiro")
+        raise FileNotFoundError("Run step1_metadata.py first")
 
     with open(meta_files[0]) as f:
         metadata = json.load(f)
 
-    theme_slug = metadata["theme"][:30].replace(" ", "_")
+    theme_slug  = metadata["theme"][:30].replace(" ", "_")
     output_name = f"video_{theme_slug}.mp4"
-
     build_video(output=output_name)
-    print(f"\n🎉 Pronto! Arquivo: {output_name}")
+    print(f"\nDone: {output_name}")
 
 
 if __name__ == "__main__":
