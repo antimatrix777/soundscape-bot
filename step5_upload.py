@@ -152,7 +152,7 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             tag = str(tag).strip()
             tag = tag.lstrip("#").lstrip("@")
             # Remove TODOS os caracteres especiais exceto letras, numeros, espacos e hifens
-            tag = re.sub(r"[^a-zA-Z0-9\s\-]", "", tag)
+            tag = re.sub(r"[^a-zA-Z0-9\s\-\u00C0-\u024F]", "", tag)  # keep accented chars
             tag = re.sub(r"\s+", " ", tag).strip()
             tag = tag[:50]  # max 50 chars por tag (conservador)
             low = tag.lower()
@@ -175,7 +175,7 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             "description": metadata["description"][:5000],
             "tags": sanitized,
             "categoryId": metadata.get("youtube_category_id", "10"),
-            "defaultLanguage": "pt",
+            "defaultLanguage": "en",  # English content for max CPM reach
         },
         "status": {
             "privacyStatus": "public",
