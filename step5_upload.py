@@ -24,6 +24,22 @@ load_dotenv()
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/youtube"]
 
+# ─────────────────────────────────────────────────────────
+# PLAYLIST IDs — create these manually on YouTube Studio
+# once, then paste the IDs here.
+# Each category maps to a playlist.
+# Leave empty string "" if not created yet — will skip.
+# ─────────────────────────────────────────────────────────
+PLAYLIST_IDS = {
+    "rain":        os.environ.get("PLAYLIST_RAIN", ""),
+    "nature":      os.environ.get("PLAYLIST_NATURE", ""),
+    "cozy":        os.environ.get("PLAYLIST_COZY", ""),
+    "jazz":        os.environ.get("PLAYLIST_JAZZ", ""),
+    "focus_noise": os.environ.get("PLAYLIST_FOCUS", ""),
+    "study":       os.environ.get("PLAYLIST_STUDY", ""),
+    "urban":       os.environ.get("PLAYLIST_URBAN", ""),
+}
+
 # Mapeamento de categoria para ID do YouTube
 YT_CATEGORY_IDS = {
     "Music": "10",
@@ -215,8 +231,17 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             raise
 
     video_id = response["id"]
-    print(f"\n✅ Upload concluído! Video ID: {video_id}")
-    print(f"   🔗 https://www.youtube.com/watch?v={video_id}")
+    print(f"\n   Upload done! Video ID: {video_id}")
+    print(f"   https://www.youtube.com/watch?v={video_id}")
+
+    # Add to category playlist
+    category = metadata.get("category", "")
+    add_to_playlist(youtube, video_id, category)
+
+    # Post pinned ambience comment
+    ambience_story = metadata.get("ambience_story", metadata.get("description", "")[:120])
+    channel_url    = "https://www.youtube.com/@NocturneNoise"
+    post_pinned_comment(youtube, video_id, ambience_story, channel_url)
 
     # Sobe thumbnail
     if os.path.exists(thumbnail_file):
@@ -233,6 +258,61 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
                    "metadata_file": metadata_file, "video_file": video_file}, f, indent=2)
 
     return video_id
+
+
+def add_to_playlist(youtube, video_id, category):
+    """Adds video to the category playlist. Skips if playlist ID not configured."""
+    playlist_id = PLAYLIST_IDS.get(category, "")
+    if not playlist_id:
+        print(f"   Playlist for '{category}' not configured — skipping")
+        return
+    try:
+        youtube.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                }
+            }
+        ).execute()
+        print(f"   Added to playlist: {category} ({playlist_id})")
+    except Exception as e:
+        print(f"   Playlist add failed: {e}")
+
+
+def post_pinned_comment(youtube, video_id, ambience_story, channel_url):
+    """Posts and pins an ambience comment on the video."""
+    try:
+        # Post the comment
+        response = youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {
+                            "textOriginal": (
+                                f"{ambience_story}\n\n"
+                                f"Save this for tonight. 🌙\n"
+                                f"More sounds every week → {channel_url}"
+                            )
+                        }
+                    }
+                }
+            }
+        ).execute()
+        comment_id = response["snippet"]["topLevelComment"]["id"]
+        print(f"   Comment posted: {comment_id}")
+
+        # Pin the comment
+        youtube.comments().setModerationStatus(
+            id=comment_id,
+            moderationStatus="published"
+        ).execute()
+        print(f"   Comment pinned OK")
+    except Exception as e:
+        print(f"   Comment post failed (non-critical): {e}")
 
 
 def main():
