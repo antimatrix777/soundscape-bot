@@ -122,13 +122,13 @@ def mark_theme_used(theme_name):
 # HASHTAGS PER CATEGORY
 # ─────────────────────────────────────────────────────────
 CATEGORY_HASHTAGS = {
-    "rain":        "#rainysounds #sleepsounds #rainambience",
-    "nature":      "#naturesounds #ambientmusic #relaxingsounds",
-    "cozy":        "#cozysounds #cafeambience #lofi",
-    "jazz":        "#jazzmusic #instrumentaljazz #jazzambience",
-    "focus_noise": "#brownnoise #whitenoise #focusmusic",
-    "study":       "#studymusic #focussounds #lofi",
-    "urban":       "#cityambience #urbansounds #nightambience",
+    "rain":        "#nocturnoise #rainambience #sleepsounds",
+    "nature":      "#nocturnoise #naturesounds #ambientmusic",
+    "cozy":        "#nocturnoise #cozyambience #lofi",
+    "jazz":        "#nocturnoise #jazzambience #instrumentaljazz",
+    "focus_noise": "#nocturnoise #brownnoise #focusmusic",
+    "study":       "#nocturnoise #studyambience #lofi",
+    "urban":       "#nocturnoise #cityambience #nightsounds",
 }
 
 # ─────────────────────────────────────────────────────────
@@ -136,46 +136,61 @@ CATEGORY_HASHTAGS = {
 # ─────────────────────────────────────────────────────────
 FALLBACK_TITLES = {
     "rain": [
-        "It's Raining Outside • {dur}",
-        "Rain at 2AM • Sleep & Focus • {dur}",
-        "The Rain Won't Stop • {dur} Lofi Ambience",
-        "Gentle Rain All Night Long • {dur}",
+        "It's 3AM and it won't stop raining",
+        "You forgot to close the window",
+        "The rain started while you were reading",
+        "Rain on the window while you sleep",
+        "It's been raining since this morning",
+        "A rainy night, nothing to worry about",
     ],
     "nature": [
-        "Deep in the Forest • {dur} Nature Ambience",
-        "The River Never Stops • {dur}",
-        "Nature at Dawn • {dur} Relaxing Ambience",
-        "Somewhere in the Woods • {dur}",
+        "Somewhere in a forest, far from everything",
+        "The river has been running for a thousand years",
+        "You found a clearing in the woods",
+        "Birds were singing before you woke up",
+        "A quiet morning at the edge of the forest",
+        "The waterfall you heard before you saw it",
     ],
     "cozy": [
-        "A Corner of the Cafe • {dur}",
-        "Stay In Tonight • {dur} Cozy Ambience",
-        "The Fireplace is On • {dur}",
-        "Quiet Evening Indoors • {dur} Cozy Sounds",
+        "A quiet corner of the café",
+        "The fireplace is still going",
+        "Nobody else is in the library right now",
+        "Stay in tonight",
+        "The kettle is on, sit down",
+        "A warm place while it's cold outside",
+        "The café is almost empty now",
     ],
     "jazz": [
-        "Late Night at the Jazz Club • {dur}",
-        "One More Song • {dur} Jazz Ambience",
-        "Smooth Jazz for a Slow Evening • {dur}",
-        "The Piano Plays On • {dur} Jazz Lounge",
+        "Late night jazz for nobody in particular",
+        "The last set of the night",
+        "The piano player stayed after closing",
+        "A jazz bar somewhere in Paris",
+        "One more song before we go",
+        "Slow jazz for a slow evening",
     ],
     "focus_noise": [
-        "Brown Noise for Deep Work • {dur}",
-        "Block Everything Out • {dur} Focus Noise",
-        "Pure Concentration • {dur} Brown Noise",
-        "White Noise All Night • {dur} Sleep Aid",
+        "Block everything out",
+        "Just you and the work",
+        "The noise that helps you disappear",
+        "Everything else fades",
+        "Deep in the work",
+        "Quiet enough to think",
     ],
     "study": [
-        "Late Night Study Session • {dur}",
-        "Focus Mode: On • {dur} Study Ambience",
-        "The Library at Midnight • {dur}",
-        "One More Chapter • {dur} Study Sounds",
+        "The library at midnight",
+        "One more chapter",
+        "You still have time",
+        "Late night, just you and the books",
+        "The desk lamp is still on",
+        "Studying while the world sleeps",
     ],
     "urban": [
-        "Tokyo at 3AM • {dur} Night Ambience",
-        "The City Never Sleeps • {dur}",
-        "Rain on the Streets • {dur} Urban Sounds",
-        "Night Drive • {dur} City Ambience",
+        "Tokyo at 3AM",
+        "The city from your window",
+        "Rain on the streets below",
+        "A city that never really sleeps",
+        "Somewhere out there, the night is still going",
+        "The last train already left",
     ],
 }
 
@@ -189,9 +204,11 @@ CATEGORY_CONTEXT = {
     "urban":       ("relaxation, mood, and urban comfort",       "city sounds, urban ambience, night sounds"),
 }
 
-SYSTEM_PROMPT = """You are a YouTube SEO specialist for a premium ambient/soundscape channel called 'Comfort Sounds'.
-Channel language: ENGLISH ONLY. All titles, descriptions and tags must be in English.
-Channel identity: warm, trustworthy, high-quality, peaceful. No clickbait, no ALL CAPS.
+SYSTEM_PROMPT = """You are a YouTube SEO specialist for an ambient/soundscape channel called 'Nocturne Noise'.
+Channel language: ENGLISH ONLY. Everything in English.
+Channel promise: "The sound of wherever you want to be" — sounds for working, relaxing at home, before sleep, daily life.
+Channel tone: intimate, present, cinematic. Like a friend who knows exactly what you need.
+No clickbait. No ALL CAPS. No generic product descriptions.
 Respond ONLY with valid JSON — no markdown, no code fences, no extra text."""
 
 
@@ -209,22 +226,35 @@ Series number: Vol. {series_num}
 Target audience: {audience}
 Keywords to weave in: {support_kw}
 Channel name: Comfort Sounds
-Channel URL: https://www.youtube.com/@ComfortSounds
+Channel URL: https://www.youtube.com/@NocturneNoise
 
 Rules for title:
 - Max 70 chars
-- Include "{dur_label}"
-- Include "Vol. {series_num}" at the end
-- Warm, inviting tone — NOT generic
-- Good example: "Heavy Rain on Window {dur_label} | Sleep & Relaxation • Vol. {series_num}"
-- Bad example: "RELAXING RAIN SOUNDS {dur_label}" (too generic, ALL CAPS)
+- DO NOT include the duration in the title
+- DO NOT include "Vol." in the title
+- Write a short, evocative, scene-setting title — like a story in one line
+- Intimate, cinematic tone — make the listener feel they are THERE
+- Write as if describing a specific moment, not a product category
+- For category "urban", ALWAYS include the city name (Tokyo, Paris, New York, London)
+- Good examples:
+  "It's 3AM and it won't stop raining"
+  "A quiet corner of the library"
+  "The café is almost empty now"
+  "Rain on the window while you sleep"
+  "You forgot to close the window"
+  "The fire is still going"
+  "Late night jazz for nobody in particular"
+  "Raining in Tokyo tonight"
+  "A café in Paris at midnight"
+  "The city outside your window"
+- Bad examples: "RELAXING RAIN SOUNDS 3 HOURS", "Heavy Rain Ambience for Sleep"
 
 Rules for description:
-- 400-500 chars total
-- First 2 lines: strong hook (shown before "more")
-- Include 3-4 natural keyword mentions
-- Include timestamps: 0:00 Intro\n0:30 {theme_data['theme'].title()}\n[duration] Fade out
-- End with: 🔔 Subscribe for new soundscapes every week.\n🎧 More sounds → https://www.youtube.com/@ComfortSounds\n{hashtags}
+- 500-600 chars total
+- Start with AMBIENCE STORYLINE: 2-3 cinematic sentences in second person that place the listener inside the scene. Be specific. Example: "You opened the window a few minutes ago. The rain started softly. Now it won't stop, and you don't want it to."
+- Then 1-2 lines with natural keyword mentions
+- Then timestamps: 0:00 Intro\n0:30 {theme_data['theme'].title()}\n[end] Fade out
+- End with: 🔔 New sounds every week → https://www.youtube.com/@NocturneNoise\n{hashtags}
 
 Rules for tags (return as JSON array of strings):
 - Generate exactly 25 individual tags
@@ -328,18 +358,17 @@ def call_ai_cascade(prompt):
 
 def build_fallback_metadata(theme_data, category, duration_hours, series_num):
     dur       = f"{duration_hours} Hours"
-    titles    = FALLBACK_TITLES.get(category, ["Comfort Sounds {dur} | Relax & Focus"])
-    title_tpl = random.choice(titles)
-    title     = title_tpl.format(dur=dur) + f" • Vol. {series_num}"
+    titles = FALLBACK_TITLES.get(category, ["A quiet place to rest"])
+    title  = random.choice(titles)
     hashtags  = CATEGORY_HASHTAGS[category]
     return {
-        "title": title[:100],
+        "title": title[:70],
         "description": (
             f"Lose yourself in {duration_hours} hours of {theme_data['theme']}. "
             f"Perfect for sleep, deep focus, and unwinding after a long day.\n\n"
             f"0:00 Intro\n0:30 {theme_data['theme'].title()}\n\n"
             f"🔔 Subscribe for new soundscapes every week.\n"
-            f"🎧 More sounds → https://www.youtube.com/@ComfortSounds\n"
+            f"🎧 More sounds → https://www.youtube.com/@NocturneNoise\n"
             f"{hashtags}"
         ),
         "tags": [
