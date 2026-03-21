@@ -217,7 +217,7 @@ def build_prompt(theme_data, category, duration_hours, series_num):
     dur_label = f"{duration_hours} Hours"
     hashtags  = CATEGORY_HASHTAGS[category]
 
-    return f"""Generate YouTube metadata for an English-language comfort soundscape channel.
+    return f"""Generate YouTube metadata for the Nocturne Noise ambient channel.
 
 Theme: "{theme_data['theme']}"
 Category: {category}
@@ -225,7 +225,7 @@ Duration: {duration_hours} hours
 Series number: Vol. {series_num}
 Target audience: {audience}
 Keywords to weave in: {support_kw}
-Channel name: Comfort Sounds
+Channel name: Nocturne Noise
 Channel URL: https://www.youtube.com/@NocturneNoise
 
 Rules for title:
@@ -377,7 +377,7 @@ def build_fallback_metadata(theme_data, category, duration_hours, series_num):
             "soundscape", "sleep aid", "background music", "cozy vibes",
             "nature sounds", "rain sounds", "stress relief", "chillout",
             "work from home", "deep focus", "concentration", "peaceful",
-            "relax", "sleep meditation", "ambient noise", "comfort sounds",
+            "relax", "sleep meditation", "ambient noise", "nocturne noise",
         ],
         "thumbnail_text":      f"{dur} of {theme_data['theme'].split()[0].title()}",
         "youtube_category_id": "10",
