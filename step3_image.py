@@ -463,7 +463,7 @@ def main():
         metadata = json.load(f)
 
     category   = metadata.get("category", "cozy")
-    thumb_text = metadata.get("thumbnail_text", "Comfort Sounds")
+    thumb_text = metadata.get("thumbnail_text", "Nocturne Noise")
     pexels_q   = metadata.get("theme_data", {}).get("pexels", metadata.get("theme", "cozy ambience"))
 
     print(f"\nGerando imagem: {category}")
