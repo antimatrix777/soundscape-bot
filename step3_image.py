@@ -24,15 +24,17 @@ STABLE_HORDE_KEY = os.environ.get("STABLE_HORDE_KEY", "0000000000")
 PEXELS_KEY       = os.environ.get("PEXELS_API_KEY", "")
 PIXABAY_KEY      = os.environ.get("PIXABAY_API_KEY", "")
 
-CHANNEL_NAME = "Comfort Sounds"
+CHANNEL_NAME = "Nocturne Noise"
 MAX_RETRIES  = 3  # tentativas por fonte antes de pular
 
 STYLE_BASE = (
-    "lofi illustration, cozy night scene, warm amber lamp light, "
-    "crescent moon visible through large window, city skyline at night, "
-    "houseplants, detailed and atmospheric, digital art, "
-    "no text, no watermark, cinematic lighting, "
-    "deep blue night sky, golden warm interior light"
+    "nocturne lofi illustration, intimate night scene, warm amber lamp glow, "
+    "crescent moon and city skyline through large window, "
+    "cozy interior, houseplants, vinyl record, candle, "
+    "moody and atmospheric, cinematic digital art, "
+    "no text, no watermark, deep indigo night sky, "
+    "warm golden light contrasting with dark blue exterior, "
+    "high detail, painterly, dreamlike"
 )
 
 CATEGORY_PROMPTS = {
@@ -350,7 +352,7 @@ def make_background(img, output="background.jpg"):
     print(f"   Background: {output}")
     return img
 
-def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg"):
+def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg", metadata_duration=3):
     W, H = 1280, 720
     img = base_img.resize((W, H), Image.LANCZOS)
     blur = img.filter(ImageFilter.GaussianBlur(radius=3))
@@ -393,10 +395,21 @@ def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg"):
             break
         font_size -= 4
         fm = get_font(font_size)
-    draw.text((W // 2 + 3, H - 160 + 3), text, font=fm, fill=(0, 0, 0, 200), anchor="mm")
+    draw.text((W // 2 + 2, H - 160 + 2), text, font=fm, fill=(0, 0, 0, 180), anchor="mm")
     draw.text((W // 2, H - 160), text, font=fm, fill=(255, 255, 255), anchor="mm")
-    draw.text((W - 24, H - 24), CHANNEL_NAME, font=fs, fill=(200, 200, 200), anchor="rb")
-    draw.ellipse([(20, 20), (28, 28)], fill=(255, 180, 50))
+
+    # Channel name — bottom right, subtle uppercase
+    draw.text((W - 20, H - 20), CHANNEL_NAME.upper(), font=get_font(20),
+              fill=(180, 180, 180), anchor="rb")
+
+    # Duration badge — bottom left, discrete dark pill
+    ft = get_font(22)
+    dur_text = f"{metadata_duration}h"
+    draw.rounded_rectangle([(16, H - 38), (62, H - 16)], radius=5, fill=(0, 0, 0, 160))
+    draw.text((39, H - 27), dur_text, font=ft, fill=(210, 210, 210), anchor="mm")
+
+    # Brand accent dot — top left, purple
+    draw.ellipse([(18, 18), (26, 26)], fill=(180, 120, 255))
     img.save(output, "JPEG", quality=93)
     print(f"   Thumbnail: {output} ({os.path.getsize(output)//1024}KB)")
     return img
@@ -460,7 +473,7 @@ def main():
     print(f"\nFonte usada: {source} | Tamanho: {img.width}x{img.height}")
 
     bg = make_background(img, "background.jpg")
-    make_thumbnail(bg, thumb_text, "thumbnail.jpg")
+    make_thumbnail(bg, thumb_text, "thumbnail.jpg", metadata_duration=metadata.get('duration_hours', 3))
     print("\nEtapa 3 concluida!")
 
 
