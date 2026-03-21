@@ -1,18 +1,23 @@
 """
-STEP 2 — Audio Generator
-========================
-3 major improvements over previous version:
-
-1. RANDOM PAGINATION on Freesound — same query, different sounds every run
-2. LAYERED SOUND RECIPES — 2-3 sounds mixed at different volumes per category
-3. MULTIPLE QUERIES per theme — rotated randomly for variety
-
+STEP 2 — Audio Generator (Nocturne Noise)
+==========================================
 Audio sources by category:
-  ambient (rain/nature/cozy/study/urban): Freesound → Pixabay → Archive
-  jazz:                                   Jamendo → ccMixter → Freesound
-  focus_noise:                            Generated locally with numpy
+  ambient: Pixabay Audio → Freesound OAuth (full files) → Internet Archive
+  jazz:    Jamendo → ccMixter → Freesound OAuth
+  noise:   Generated locally with numpy (perfect quality)
+
+Key improvements:
+  - Freesound OAuth: downloads FULL files (minutes/hours) not 30s previews
+  - Pixabay as primary: curated, full files, no OAuth needed
+  - Internet Archive: picks LARGEST file (best quality), not smallest
+  - RMS normalization: preserves natural dynamics
+  - Haas stereo effect: depth for mono sources
+  - EQ: gentle high-shelf cut for rain/noise (reduces listening fatigue)
+  - Layer random offset: breaks sync patterns
+  - Jazz uses recipe tags for variety
+  - Bitrate: 128kbps ambient, 192kbps jazz
 """
-import os, json, glob, time, random, requests
+import os, json, glob, time, random, requests, base64
 from pydub import AudioSegment
 from pydub.effects import normalize
 from io import BytesIO
@@ -20,16 +25,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-FREESOUND_KEY = os.environ.get("FREESOUND_API_KEY", "")
-JAMENDO_KEY   = os.environ.get("JAMENDO_CLIENT_ID", "")
-PIXABAY_KEY   = os.environ.get("PIXABAY_API_KEY", "")
+FREESOUND_KEY    = os.environ.get("FREESOUND_API_KEY", "")
+FREESOUND_TOKEN  = os.environ.get("FREESOUND_TOKEN_B64", "")
+FREESOUND_CID    = os.environ.get("FREESOUND_CLIENT_ID", "")
+FREESOUND_CSEC   = os.environ.get("FREESOUND_CLIENT_SECRET", "")
+JAMENDO_KEY      = os.environ.get("JAMENDO_CLIENT_ID", "")
+PIXABAY_KEY      = os.environ.get("PIXABAY_API_KEY", "")
 
-TARGET_LUFS    = -18
-CROSSFADE_MS   = 6000
-FADE_IN_MS     = 20000
-FADE_OUT_MS    = 30000
-MIN_SAMPLE_SEC = 20
-SAMPLE_RATE    = 44100
+TARGET_LUFS     = -18
+CROSSFADE_MS    = 6000
+FADE_IN_MS      = 20000
+FADE_OUT_MS     = 30000
+MIN_SAMPLE_SEC  = 45   # increased from 20s — longer samples = less looping
+SAMPLE_RATE     = 44100
 
 BAD_TAGS = {
     "voice","speech","talking","conversation","song","singing",
@@ -39,19 +47,6 @@ BAD_TAGS = {
     "frog","cricket","insect","cicada",
 }
 
-# ─────────────────────────────────────────────────────────
-# SOUND RECIPES — layered mixing per category
-# Each recipe has a primary layer + optional ambient layers.
-# Layers are mixed at specified dB reduction from primary.
-#
-# Format per category:
-#   {
-#     "primary":  [list of query options — one picked randomly],
-#     "layers": [
-#       {"queries": [...], "db_reduction": -12}   # softer layer
-#     ]
-#   }
-# ─────────────────────────────────────────────────────────
 SOUND_RECIPES = {
     "rain": {
         "primary": [
@@ -59,11 +54,13 @@ SOUND_RECIPES = {
             "rain window glass indoor",
             "rain rooftop night steady",
             "pouring rain outside window",
+            "rain on glass night ambient",
         ],
         "layers": [
             {"queries": ["distant thunder low rumble","thunder far away soft"], "db_reduction": -14},
             {"queries": ["indoor room tone ambience quiet","quiet room interior"], "db_reduction": -20},
         ],
+        "eq": "high_cut",
     },
     "nature": {
         "primary": [
@@ -71,11 +68,13 @@ SOUND_RECIPES = {
             "woodland birds soft dawn",
             "forest nature birds peaceful",
             "deep forest morning gentle",
+            "forest stream birds ambient",
         ],
         "layers": [
             {"queries": ["stream water flowing gentle","babbling brook soft"], "db_reduction": -10},
             {"queries": ["wind through trees gentle","breeze leaves soft"], "db_reduction": -16},
         ],
+        "eq": "natural",
     },
     "cozy": {
         "primary": [
@@ -83,11 +82,13 @@ SOUND_RECIPES = {
             "cafe indoor background quiet",
             "coffee shop morning soft murmur",
             "cafe restaurant gentle background",
+            "coffee shop ambience soft talking distant",
         ],
         "layers": [
             {"queries": ["fireplace crackling wood fire","fire crackling gentle"], "db_reduction": -11},
             {"queries": ["vinyl record noise crackle","vinyl crackle soft"], "db_reduction": -18},
         ],
+        "eq": "natural",
     },
     "study": {
         "primary": [
@@ -100,6 +101,7 @@ SOUND_RECIPES = {
             {"queries": ["rain window soft gentle","rain outside window"], "db_reduction": -10},
             {"queries": ["page turning book soft","pencil writing paper"], "db_reduction": -20},
         ],
+        "eq": "natural",
     },
     "urban": {
         "primary": [
@@ -112,45 +114,74 @@ SOUND_RECIPES = {
             {"queries": ["rain city street night","rain on pavement urban"], "db_reduction": -8},
             {"queries": ["distant bar music muffled","muffled music distant cafe"], "db_reduction": -20},
         ],
+        "eq": "natural",
     },
     "jazz": {
         "primary_jamendo_tags": [
             "jazz", "piano jazz", "jazz piano", "bossanova", "jazz guitar",
+            "smooth jazz", "acoustic jazz", "jazz quartet",
         ],
         "layers": [
             {"queries": ["bar cafe ambience background soft","jazz club ambience"], "db_reduction": -14},
             {"queries": ["rain window soft","gentle rain indoor"], "db_reduction": -18},
         ],
+        "eq": "natural",
     },
     "focus_noise": {
         "noise_type": "brown",
         "layers": [
             {"queries": ["distant rain soft","rain far away gentle"], "db_reduction": -16},
         ],
+        "eq": "high_cut",
     },
 }
 
 
 # ══════════════════════════════════════════════════════════
-# FREESOUND — random page for variety every run
+# FREESOUND OAUTH — full file downloads
 # ══════════════════════════════════════════════════════════
-def freesound_search(query, num=8, randomize_page=True):
-    if not FREESOUND_KEY:
-        raise ValueError("FREESOUND_API_KEY not set")
+def get_freesound_token():
+    """Load and refresh Freesound OAuth token."""
+    if not FREESOUND_TOKEN:
+        raise ValueError("FREESOUND_TOKEN_B64 not set")
 
-    # Random page = different sounds every run for the same query
-    page = random.randint(1, 5) if randomize_page else 1
-    print(f"   [Freesound] '{query}' (page {page})")
+    token_data = json.loads(base64.b64decode(FREESOUND_TOKEN).decode())
+    access_token  = token_data.get("access_token", "")
+    refresh_token = token_data.get("refresh_token", "")
+
+    # Try to refresh token if we have client credentials
+    if refresh_token and FREESOUND_CID and FREESOUND_CSEC:
+        try:
+            r = requests.post("https://freesound.org/apiv2/oauth2/access_token/", data={
+                "client_id":     FREESOUND_CID,
+                "client_secret": FREESOUND_CSEC,
+                "grant_type":    "refresh_token",
+                "refresh_token": refresh_token,
+            }, timeout=20)
+            if r.status_code == 200:
+                new_data     = r.json()
+                access_token = new_data.get("access_token", access_token)
+                print("   Freesound token refreshed OK")
+        except Exception as e:
+            print(f"   Token refresh failed (using existing): {e}")
+
+    return access_token
+
+
+def freesound_oauth_search(query, num=12):
+    """Search Freesound with OAuth — gets full file metadata."""
+    token = get_freesound_token()
+    page  = random.randint(1, 4)
+    print(f"   [Freesound OAuth] '{query}' (page {page})")
 
     r = requests.get("https://freesound.org/apiv2/search/text/", params={
         "query":     query,
-        "token":     FREESOUND_KEY,
-        "fields":    "id,name,previews,duration,license,tags,avg_rating,num_ratings,num_downloads",
-        "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 480] license:(\"Creative Commons 0\" OR \"Attribution\")",
+        "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
+        "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 7200] license:(\"Creative Commons 0\" OR \"Attribution\")",
         "sort":      "rating_desc",
         "page_size": 15,
         "page":      page,
-    }, timeout=30)
+    }, headers={"Authorization": f"Bearer {token}"}, timeout=30)
     r.raise_for_status()
     results = r.json().get("results", [])
 
@@ -161,46 +192,53 @@ def freesound_search(query, num=8, randomize_page=True):
         key=lambda s: s.get("avg_rating", 0) * min(s.get("num_downloads", 0) / 500, 5),
         reverse=True,
     )
-    # Shuffle top results slightly for more variety
-    top = clean[:max(num * 2, 10)]
+    top = clean[:max(num * 2, 12)]
     random.shuffle(top)
     chosen = top[:num]
-    print(f"   -> {len(results)} found, {len(chosen)} selected (page {page})")
+    print(f"   -> {len(results)} found, {len(chosen)} selected")
     return chosen
 
 
-def freesound_download(sound, folder="audio_tmp"):
+def freesound_oauth_download(sound, folder="audio_tmp"):
+    """Download FULL audio file from Freesound using OAuth."""
     os.makedirs(folder, exist_ok=True)
-    url = sound["previews"].get("preview-hq-mp3") or sound["previews"].get("preview-lq-mp3")
-    if not url:
-        return None
-    path = os.path.join(folder, f"fs_{sound['id']}.mp3")
+    sound_id = sound["id"]
+    path     = os.path.join(folder, f"fs_full_{sound_id}.mp3")
     if os.path.exists(path):
         return path
-    r = requests.get(url, timeout=60)
+
+    token        = get_freesound_token()
+    download_url = f"https://freesound.org/apiv2/sounds/{sound_id}/download/"
+
+    print(f"   Downloading full: {sound.get('name','')[:45]} ({sound.get('duration',0):.0f}s)")
+    r = requests.get(download_url,
+                     headers={"Authorization": f"Bearer {token}"},
+                     timeout=120, stream=True)
     r.raise_for_status()
     with open(path, "wb") as f:
-        f.write(r.content)
+        for chunk in r.iter_content(32768):
+            f.write(chunk)
     time.sleep(0.3)
     return path
 
 
-def fetch_freesound_audio(query, num=8):
-    """Fetches sounds from Freesound and returns processed segments."""
-    sounds = freesound_search(query, num=num)
+def fetch_freesound_oauth(query, num=10):
+    """Fetch full Freesound files via OAuth."""
+    sounds = freesound_oauth_search(query, num=num)
     if not sounds:
-        raise RuntimeError(f"Freesound: no sounds for '{query}'")
-    files = [freesound_download(s) for s in sounds]
+        raise RuntimeError(f"Freesound OAuth: no sounds for '{query}'")
+    files = [freesound_oauth_download(s) for s in sounds]
     files = [f for f in files if f]
     if not files:
-        raise RuntimeError("Freesound: download failed")
-    return load_segments(files, channels=1)
+        raise RuntimeError("Freesound OAuth: download failed")
+    return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
-# PIXABAY AUDIO — fallback ambient
+# PIXABAY AUDIO — primary ambient source
+# Full files, curated, CC license, no OAuth needed
 # ══════════════════════════════════════════════════════════
-def pixabay_audio_search(query, num=8):
+def fetch_pixabay_audio(query, num=10):
     if not PIXABAY_KEY:
         raise ValueError("PIXABAY_API_KEY not set")
     print(f"   [Pixabay Audio] '{query}'")
@@ -210,55 +248,49 @@ def pixabay_audio_search(query, num=8):
     r.raise_for_status()
     hits = r.json().get("hits", [])
     print(f"   -> {len(hits)} found")
-    return hits
-
-
-def pixabay_download(hit, folder="audio_tmp"):
-    os.makedirs(folder, exist_ok=True)
-    url = hit.get("audio") or hit.get("audioURL")
-    if not url:
-        for k, v in hit.items():
-            if isinstance(v, str) and v.endswith(".mp3"):
-                url = v
-                break
-    if not url:
-        return None
-    path = os.path.join(folder, f"pb_{hit['id']}.mp3")
-    if os.path.exists(path):
-        return path
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    with open(path, "wb") as f:
-        f.write(r.content)
-    time.sleep(0.3)
-    return path
-
-
-def fetch_pixabay_audio(query, num=8):
-    hits = pixabay_audio_search(query, num=num)
     if not hits:
         raise RuntimeError(f"Pixabay: no sounds for '{query}'")
-    files = [pixabay_download(h) for h in hits]
-    files = [f for f in files if f]
+
+    os.makedirs("audio_tmp", exist_ok=True)
+    files = []
+    random.shuffle(hits)
+    for hit in hits:
+        url = hit.get("audio") or hit.get("audioURL")
+        if not url:
+            for k, v in hit.items():
+                if isinstance(v, str) and v.endswith(".mp3"):
+                    url = v; break
+        if not url:
+            continue
+        path = os.path.join("audio_tmp", f"pb_{hit['id']}.mp3")
+        if not os.path.exists(path):
+            r2 = requests.get(url, timeout=60)
+            r2.raise_for_status()
+            with open(path, "wb") as f:
+                f.write(r2.content)
+            time.sleep(0.3)
+        files.append(path)
     if not files:
         raise RuntimeError("Pixabay: download failed")
-    return load_segments(files, channels=1)
+    return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
-# INTERNET ARCHIVE — last fallback
+# INTERNET ARCHIVE — picks LARGEST file (best quality)
 # ══════════════════════════════════════════════════════════
 def fetch_archive_audio(query, num=6):
     print(f"   [Internet Archive] '{query}'")
     r = requests.get("https://archive.org/advancedsearch.php", params={
-        "q": f"{query} AND mediatype:audio AND format:MP3",
-        "fl": "identifier,title",
-        "rows": num, "output": "json",
+        "q":      f"{query} AND mediatype:audio AND format:MP3",
+        "fl":     "identifier,title",
+        "rows":   num,
+        "output": "json",
     }, timeout=30)
     r.raise_for_status()
     docs = r.json().get("response", {}).get("docs", [])
     print(f"   -> {len(docs)} items")
 
+    os.makedirs("audio_tmp", exist_ok=True)
     files = []
     for doc in docs:
         identifier = doc.get("identifier", "")
@@ -270,24 +302,25 @@ def fetch_archive_audio(query, num=6):
                     if f.get("name", "").endswith(".mp3")]
             if not mp3s:
                 continue
-            mp3s.sort(key=lambda f: int(f.get("size", 9999999999)))
+            # FIX: pick LARGEST file (best quality) not smallest
+            mp3s.sort(key=lambda f: int(f.get("size", 0)), reverse=True)
             target = mp3s[0]
-            url  = f"https://archive.org/download/{identifier}/{target['name']}"
-            path = os.path.join("audio_tmp", f"ia_{identifier[:20]}.mp3")
-            os.makedirs("audio_tmp", exist_ok=True)
+            url    = f"https://archive.org/download/{identifier}/{target['name']}"
+            path   = os.path.join("audio_tmp", f"ia_{identifier[:20]}.mp3")
             if not os.path.exists(path):
-                r2 = requests.get(url, timeout=120, stream=True)
+                print(f"   -> {target['name'][:40]} ({int(target.get('size',0))//1024//1024}MB)")
+                r2 = requests.get(url, timeout=180, stream=True)
                 r2.raise_for_status()
                 with open(path, "wb") as f:
                     for chunk in r2.iter_content(32768):
                         f.write(chunk)
             files.append(path)
         except Exception as e:
-            print(f"   IA item error: {e}")
+            print(f"   IA error: {e}")
 
     if not files:
         raise RuntimeError("Archive: no files downloaded")
-    return load_segments(files, channels=1)
+    return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
@@ -296,7 +329,6 @@ def fetch_archive_audio(query, num=6):
 def fetch_jamendo(tags, num=12):
     if not JAMENDO_KEY:
         raise ValueError("JAMENDO_CLIENT_ID not set")
-
     attempts = list(dict.fromkeys([tags, "jazz", "piano", "acoustic", "instrumental"]))
     for attempt in attempts:
         print(f"   [Jamendo] tags='{attempt}'")
@@ -309,31 +341,32 @@ def fetch_jamendo(tags, num=12):
                 "audioformat":       "mp31",
                 "boost":             "popularity_month",
                 "vocalinstrumental": "instrumental",
-                "offset":            random.randint(0, 50),  # variety
+                "offset":            random.randint(0, 50),
             }, timeout=30)
             r.raise_for_status()
             results = r.json().get("results", [])
             print(f"   -> {len(results)} tracks")
-            if results:
-                random.shuffle(results)
-                files = []
-                for t in results[:10]:
-                    url = t.get("audio")
-                    if not url:
-                        continue
-                    path = os.path.join("audio_tmp", f"jm_{t['id']}.mp3")
-                    os.makedirs("audio_tmp", exist_ok=True)
-                    if not os.path.exists(path):
-                        print(f"   -> {t.get('name','')[:45]}")
-                        r2 = requests.get(url, timeout=120, stream=True)
-                        r2.raise_for_status()
-                        with open(path, "wb") as f:
-                            for chunk in r2.iter_content(32768):
-                                f.write(chunk)
-                        time.sleep(0.5)
-                    files.append(path)
-                if files:
-                    return load_segments(files, channels=2)
+            if not results:
+                continue
+            random.shuffle(results)
+            os.makedirs("audio_tmp", exist_ok=True)
+            files = []
+            for t in results[:10]:
+                url = t.get("audio")
+                if not url:
+                    continue
+                path = os.path.join("audio_tmp", f"jm_{t['id']}.mp3")
+                if not os.path.exists(path):
+                    print(f"   -> {t.get('name','')[:45]}")
+                    r2 = requests.get(url, timeout=120, stream=True)
+                    r2.raise_for_status()
+                    with open(path, "wb") as f:
+                        for chunk in r2.iter_content(32768):
+                            f.write(chunk)
+                    time.sleep(0.5)
+                files.append(path)
+            if files:
+                return load_segments(files, channels=2)
         except Exception as e:
             print(f"   Jamendo error '{attempt}': {e}")
     raise RuntimeError("Jamendo: no results after all fallbacks")
@@ -342,50 +375,48 @@ def fetch_jamendo(tags, num=12):
 # ══════════════════════════════════════════════════════════
 # CCMIXTER — jazz fallback
 # ══════════════════════════════════════════════════════════
-def fetch_ccmixter(query="jazz instrumental", num=12):
+def fetch_ccmixter(query="jazz instrumental", num=10):
     print(f"   [ccMixter] '{query}'")
-    try:
-        r = requests.get("http://ccmixter.org/api/query", params={
-            "tags": query, "type": "instrumentals",
-            "format": "json", "limit": num, "sort": "rank",
-        }, timeout=30)
-        r.raise_for_status()
-        results = r.json() if isinstance(r.json(), list) else []
-        print(f"   -> {len(results)} tracks")
-        if not results:
-            raise RuntimeError("ccMixter: no results")
-        random.shuffle(results)
-        files = []
-        for t in results[:8]:
-            for fdata in t.get("files", []):
-                url = fdata.get("download_url") or fdata.get("file_page_url")
-                if url and url.endswith(".mp3"):
-                    tid = str(t.get("upload_id", random.randint(1000, 9999)))
-                    path = os.path.join("audio_tmp", f"cc_{tid}.mp3")
-                    os.makedirs("audio_tmp", exist_ok=True)
-                    if not os.path.exists(path):
-                        try:
-                            r2 = requests.get(url, timeout=120, stream=True, allow_redirects=True)
-                            r2.raise_for_status()
-                            with open(path, "wb") as f:
-                                for chunk in r2.iter_content(32768):
-                                    f.write(chunk)
-                            if os.path.getsize(path) < 10000:
-                                os.remove(path)
-                                continue
-                        except Exception:
-                            continue
-                    files.append(path)
-                    break
-        if not files:
-            raise RuntimeError("ccMixter: no files downloaded")
-        return load_segments(files, channels=2)
-    except Exception as e:
-        raise RuntimeError(f"ccMixter failed: {e}")
+    r = requests.get("http://ccmixter.org/api/query", params={
+        "tags": query, "type": "instrumentals",
+        "format": "json", "limit": num, "sort": "rank",
+    }, timeout=30)
+    r.raise_for_status()
+    results = r.json() if isinstance(r.json(), list) else []
+    print(f"   -> {len(results)} tracks")
+    if not results:
+        raise RuntimeError("ccMixter: no results")
+
+    random.shuffle(results)
+    os.makedirs("audio_tmp", exist_ok=True)
+    files = []
+    for t in results[:8]:
+        for fdata in t.get("files", []):
+            url = fdata.get("download_url") or fdata.get("file_page_url")
+            if url and url.endswith(".mp3"):
+                tid  = str(t.get("upload_id", random.randint(1000, 9999)))
+                path = os.path.join("audio_tmp", f"cc_{tid}.mp3")
+                if not os.path.exists(path):
+                    try:
+                        r2 = requests.get(url, timeout=120, stream=True, allow_redirects=True)
+                        r2.raise_for_status()
+                        with open(path, "wb") as f:
+                            for chunk in r2.iter_content(32768):
+                                f.write(chunk)
+                        if os.path.getsize(path) < 10000:
+                            os.remove(path); continue
+                    except Exception:
+                        continue
+                files.append(path)
+                break
+
+    if not files:
+        raise RuntimeError("ccMixter: no files downloaded")
+    return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
-# NUMPY — focus noise (locally generated, perfect quality)
+# NUMPY — focus noise (locally generated)
 # ══════════════════════════════════════════════════════════
 def generate_brown_noise(duration_ms):
     import numpy as np
@@ -402,23 +433,24 @@ def generate_brown_noise(duration_ms):
 
 def generate_white_noise(duration_ms):
     import numpy as np
-    n = int(SAMPLE_RATE * duration_ms / 1000)
+    n   = int(SAMPLE_RATE * duration_ms / 1000)
     rng = np.random.default_rng(int(time.time() * 1000) % 999999)
-    L = np.clip(rng.normal(0, 0.15, n), -1, 1)
-    R = np.clip(rng.normal(0, 0.15, n), -1, 1)
-    stereo = np.column_stack([(L * 32767).astype(np.int16), (R * 32767).astype(np.int16)]).flatten()
+    L   = np.clip(rng.normal(0, 0.15, n), -1, 1)
+    R   = np.clip(rng.normal(0, 0.15, n), -1, 1)
+    stereo = np.column_stack([(L * 32767).astype(np.int16),
+                               (R * 32767).astype(np.int16)]).flatten()
     return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
 
 def generate_pink_noise(duration_ms):
     import numpy as np
     n = int(SAMPLE_RATE * duration_ms / 1000)
     def _pink():
-        f = np.fft.rfftfreq(n, d=1/SAMPLE_RATE)
-        f[0] = 1
-        power = 1 / np.sqrt(f); power[0] = 0
-        phase = np.random.uniform(0, 2 * np.pi, len(f))
-        p = np.fft.irfft(power * np.exp(1j * phase), n=n)
-        p /= (np.max(np.abs(p)) + 1e-8)
+        f        = np.fft.rfftfreq(n, d=1/SAMPLE_RATE)
+        f[0]     = 1
+        power    = 1 / np.sqrt(f); power[0] = 0
+        phase    = np.random.uniform(0, 2 * np.pi, len(f))
+        p        = np.fft.irfft(power * np.exp(1j * phase), n=n)
+        p       /= (np.max(np.abs(p)) + 1e-8)
         return (p * 0.5 * 32767).astype(np.int16)
     stereo = np.column_stack([_pink(), _pink()]).flatten()
     return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
@@ -428,7 +460,9 @@ def build_noise(noise_type, duration_hours):
     block_ms  = 10 * 60 * 1000
     target_ms = duration_hours * 3600 * 1000
     n_blocks  = (target_ms // block_ms) + 2
-    gen = {"white": generate_white_noise, "brown": generate_brown_noise, "pink": generate_pink_noise}
+    gen = {"white": generate_white_noise,
+           "brown": generate_brown_noise,
+           "pink":  generate_pink_noise}
     fn  = gen.get(noise_type, generate_brown_noise)
     combined = AudioSegment.empty()
     for i in range(n_blocks):
@@ -442,14 +476,101 @@ def build_noise(noise_type, duration_hours):
 # ══════════════════════════════════════════════════════════
 # AUDIO PROCESSING
 # ══════════════════════════════════════════════════════════
-def load_segments(files, channels=1):
-    """Load audio files into normalized AudioSegment list."""
+def rms_normalize(seg, target_dbrms=-20.0):
+    """
+    Normalize by RMS instead of peak — preserves natural dynamics.
+    Peak normalization flattens dynamics; RMS keeps them alive.
+    """
+    rms = seg.rms
+    if rms == 0:
+        return seg
+    current_dbrms = 20 * (rms / 32767.0).__abs__().__class__.__name__ and \
+                    10 * (rms**2 / (32767**2)).__class__.__name__ and \
+                    seg.dBFS
+    # Use pydub dBFS as approximation (close enough for our purposes)
+    diff = target_dbrms - seg.dBFS
+    if abs(diff) > 1:
+        return seg + diff
+    return seg
+
+
+def apply_haas_stereo(seg, delay_ms=18):
+    """
+    Haas effect: delays right channel by ~18ms to create stereo width
+    from mono sources. Inaudible as separate echo but creates spatial depth.
+    """
+    if seg.channels == 2:
+        return seg
+    try:
+        import numpy as np
+        samples   = np.array(seg.get_array_of_samples(), dtype=np.float32)
+        delay_smp = int(seg.frame_rate * delay_ms / 1000)
+        L         = samples.copy()
+        R         = np.roll(samples, delay_smp)
+        R[:delay_smp] = 0
+        stereo    = np.column_stack([L, R]).flatten().astype(np.int16)
+        return AudioSegment(stereo.tobytes(), frame_rate=seg.frame_rate,
+                            sample_width=2, channels=2)
+    except Exception:
+        return seg.set_channels(2)
+
+
+def apply_eq(seg, eq_type="natural"):
+    """
+    Gentle EQ to reduce listening fatigue.
+    high_cut: reduces harshness above 8kHz (rain, noise)
+    natural: minimal processing
+    """
+    if eq_type != "high_cut":
+        return seg
+    try:
+        import numpy as np
+        samples    = np.array(seg.get_array_of_samples(), dtype=np.float32)
+        channels   = seg.channels
+        frame_rate = seg.frame_rate
+
+        if channels == 2:
+            samples = samples.reshape(-1, 2)
+
+        def gentle_highshelf_cut(ch_samples):
+            # Simple IIR low-pass at ~9kHz — gentle rolloff
+            alpha  = 0.85  # ~9kHz cutoff at 44100Hz
+            out    = np.zeros_like(ch_samples)
+            out[0] = ch_samples[0]
+            for i in range(1, len(ch_samples)):
+                out[i] = alpha * out[i-1] + (1 - alpha) * ch_samples[i]
+            return out
+
+        if channels == 2:
+            processed = np.column_stack([
+                gentle_highshelf_cut(samples[:, 0]),
+                gentle_highshelf_cut(samples[:, 1]),
+            ]).flatten()
+        else:
+            processed = gentle_highshelf_cut(samples)
+
+        processed = np.clip(processed, -32767, 32767).astype(np.int16)
+        return AudioSegment(processed.tobytes(), frame_rate=frame_rate,
+                            sample_width=2, channels=channels)
+    except Exception as e:
+        print(f"   EQ skipped: {e}")
+        return seg
+
+
+def load_segments(files, channels=2):
+    """Load audio files with RMS normalization and stereo conversion."""
     segments = []
     for f in files:
         try:
             seg = AudioSegment.from_mp3(f)
-            seg = seg.set_channels(channels).set_frame_rate(SAMPLE_RATE)
-            seg = normalize(seg)
+            seg = seg.set_frame_rate(SAMPLE_RATE)
+            # RMS normalize to preserve dynamics
+            seg = rms_normalize(seg, target_dbrms=-20.0)
+            # Convert mono to stereo with Haas effect for depth
+            if seg.channels == 1:
+                seg = apply_haas_stereo(seg)
+            else:
+                seg = seg.set_channels(2)
             if len(seg) < MIN_SAMPLE_SEC * 1000:
                 continue
             segments.append(seg)
@@ -470,24 +591,29 @@ def loop_to_duration(segments, duration_hours):
     while len(combined) < target_ms:
         seg            = segments[i % len(segments)]
         safe_crossfade = min(CROSSFADE_MS, len(seg) // 4)
-        combined       = combined.append(seg, crossfade=safe_crossfade) if len(combined) > 0 else combined + seg
+        combined       = combined.append(seg, crossfade=safe_crossfade) \
+                         if len(combined) > 0 else combined + seg
         i += 1
         if i % 5 == 0:
-            print(f"   {min(100, len(combined)/target_ms*100):.0f}% ({len(combined)//60000}min)")
+            print(f"   {min(100, len(combined)/target_ms*100):.0f}% "
+                  f"({len(combined)//60000}min)")
     return combined[:target_ms]
 
 
 def mix_layer(base, layer_segs, db_reduction, duration_hours):
-    """
-    Overlays a softer layer on top of the base audio.
-    db_reduction: how many dB quieter the layer is (e.g. -12 = 12dB softer)
-    """
+    """Overlay a layer at reduced volume with random start offset."""
     try:
         layer = loop_to_duration(layer_segs, duration_hours)
-        layer = normalize(layer) + db_reduction  # make it quieter
-        # Match channels
+        layer = rms_normalize(layer) + db_reduction
+
+        # FIX: random offset — breaks synchronization patterns
+        if len(layer) > 60000:
+            offset = random.randint(0, len(layer) // 3)
+            layer  = layer[offset:] + layer[:offset]
+
         if base.channels != layer.channels:
             layer = layer.set_channels(base.channels)
+
         result = base.overlay(layer)
         print(f"   Layer mixed at {db_reduction}dB")
         return result
@@ -496,18 +622,16 @@ def mix_layer(base, layer_segs, db_reduction, duration_hours):
         return base
 
 
-def finalize_audio(combined, output="output_audio.mp3"):
+def finalize_audio(combined, output="output_audio.mp3", bitrate="128k"):
     print("\n   Finalizing audio...")
     combined = combined.fade_in(FADE_IN_MS).fade_out(FADE_OUT_MS)
-    combined = normalize(combined)
-    db = combined.dBFS
-    if db < TARGET_LUFS - 3:
-        combined = combined + (TARGET_LUFS - db)
+    combined = rms_normalize(combined, target_dbrms=TARGET_LUFS)
     combined = combined.set_frame_rate(SAMPLE_RATE)
-    combined.export(output, format="mp3", bitrate="192k",
-                    tags={"artist": "Nocturne Noise", "album": "Nocturne Noise Collection"})
+    combined.export(output, format="mp3", bitrate=bitrate,
+                    tags={"artist": "Nocturne Noise",
+                          "album":  "Nocturne Noise Collection"})
     mb = os.path.getsize(output) / (1024 * 1024)
-    print(f"   Done: {output} ({mb:.0f}MB, {len(combined)/3600000:.1f}h)")
+    print(f"   Done: {output} ({mb:.0f}MB, {len(combined)/3600000:.1f}h, {bitrate})")
     return output
 
 
@@ -520,14 +644,14 @@ def cleanup_tmp():
 
 
 # ══════════════════════════════════════════════════════════
-# FETCH AMBIENT — cascade with fallbacks
+# SOURCE CASCADES
 # ══════════════════════════════════════════════════════════
 def fetch_ambient(query):
-    """Try Freesound → Pixabay → Archive for ambient sounds."""
+    """Pixabay → Freesound OAuth → Internet Archive"""
     for name, fn, args in [
-        ("Freesound",        fetch_freesound_audio,  (query,)),
-        ("Pixabay Audio",    fetch_pixabay_audio,    (query,)),
-        ("Internet Archive", fetch_archive_audio,    (query,)),
+        ("Pixabay Audio",    fetch_pixabay_audio,   (query,)),
+        ("Freesound OAuth",  fetch_freesound_oauth, (query,)),
+        ("Internet Archive", fetch_archive_audio,   (query,)),
     ]:
         try:
             print(f"\n   Trying {name}...")
@@ -538,11 +662,11 @@ def fetch_ambient(query):
 
 
 def fetch_jazz(tags):
-    """Try Jamendo → ccMixter → Freesound for jazz."""
+    """Jamendo → ccMixter → Freesound OAuth"""
     for name, fn, args in [
-        ("Jamendo",   fetch_jamendo,   (tags,)),
-        ("ccMixter",  fetch_ccmixter,  ("jazz instrumental",)),
-        ("Freesound", fetch_freesound_audio, ("jazz piano soft instrumental",)),
+        ("Jamendo",          fetch_jamendo,         (tags,)),
+        ("ccMixter",         fetch_ccmixter,        ("jazz instrumental",)),
+        ("Freesound OAuth",  fetch_freesound_oauth, ("jazz piano soft instrumental",)),
     ]:
         try:
             print(f"\n   Trying {name}...")
@@ -553,10 +677,11 @@ def fetch_jazz(tags):
 
 
 # ══════════════════════════════════════════════════════════
-# MAIN — build audio with layered recipes
+# MAIN
 # ══════════════════════════════════════════════════════════
 def main():
-    meta_files = sorted(glob.glob("metadata_*.json"), key=os.path.getmtime, reverse=True)
+    meta_files = sorted(glob.glob("metadata_*.json"),
+                        key=os.path.getmtime, reverse=True)
     if not meta_files:
         raise FileNotFoundError("Run step1_metadata.py first")
 
@@ -567,60 +692,71 @@ def main():
     duration   = metadata["duration_hours"]
     theme_data = metadata.get("theme_data", {})
     recipe     = SOUND_RECIPES.get(category, {})
+    eq_type    = recipe.get("eq", "natural")
 
     print(f"\nGenerating audio: {metadata['theme']} ({duration}h)")
-    print(f"Category: {category}")
+    print(f"Category: {category} | EQ: {eq_type}")
 
     # ── Focus noise ────────────────────────────────────────
     if category == "focus_noise":
         noise_type = theme_data.get("noise_type", "brown")
         combined   = build_noise(noise_type, duration)
+        combined   = apply_eq(combined, eq_type)
 
-        # Optionally layer distant rain for warmth
         for layer in recipe.get("layers", []):
             query = random.choice(layer["queries"])
             try:
                 layer_segs = fetch_ambient(query)
-                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+                combined   = mix_layer(combined, layer_segs,
+                                       layer["db_reduction"], duration)
             except Exception as e:
                 print(f"   Focus layer skipped: {e}")
+        bitrate = "128k"
 
     # ── Jazz ───────────────────────────────────────────────
     elif category == "jazz":
-        tags       = theme_data.get("tags", "jazz")
-        primary    = fetch_jazz(tags)
-        combined   = loop_to_duration(primary, duration)
+        # FIX: use recipe tags for variety instead of always theme_data tag
+        jazz_tags = recipe.get("primary_jamendo_tags", ["jazz"])
+        tags      = random.choice(jazz_tags)
+        print(f"   Jazz tag: '{tags}'")
 
-        # Layer ambient sounds (bar, rain) underneath jazz
+        primary  = fetch_jazz(tags)
+        combined = loop_to_duration(primary, duration)
+        combined = apply_eq(combined, eq_type)
+
         for layer in recipe.get("layers", []):
             query = random.choice(layer["queries"])
             try:
                 layer_segs = fetch_ambient(query)
-                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+                combined   = mix_layer(combined, layer_segs,
+                                       layer["db_reduction"], duration)
             except Exception as e:
                 print(f"   Jazz layer skipped: {e}")
+        bitrate = "192k"  # higher bitrate for music
 
-    # ── Ambient (rain/nature/cozy/study/urban) ─────────────
+    # ── Ambient ────────────────────────────────────────────
     else:
-        # Pick a random primary query from recipe options
-        primary_queries = recipe.get("primary", [theme_data.get("query", metadata["theme"])])
+        primary_queries = recipe.get("primary",
+                          [theme_data.get("query", metadata["theme"])])
         primary_query   = random.choice(primary_queries)
         print(f"\n   Primary query: '{primary_query}'")
 
         primary_segs = fetch_ambient(primary_query)
         combined     = loop_to_duration(primary_segs, duration)
+        combined     = apply_eq(combined, eq_type)
 
-        # Mix in each layer
         for layer in recipe.get("layers", []):
             query = random.choice(layer["queries"])
             print(f"\n   Adding layer: '{query}'")
             try:
                 layer_segs = fetch_ambient(query)
-                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+                combined   = mix_layer(combined, layer_segs,
+                                       layer["db_reduction"], duration)
             except Exception as e:
                 print(f"   Layer skipped: {e}")
+        bitrate = "128k"
 
-    finalize_audio(combined, "output_audio.mp3")
+    finalize_audio(combined, "output_audio.mp3", bitrate=bitrate)
     cleanup_tmp()
 
 
