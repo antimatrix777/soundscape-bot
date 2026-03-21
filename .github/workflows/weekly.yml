@@ -53,6 +53,9 @@ jobs:
           PLAYLIST_FOCUS:    ${{ secrets.PLAYLIST_FOCUS }}
           PLAYLIST_STUDY:    ${{ secrets.PLAYLIST_STUDY }}
           PLAYLIST_URBAN:    ${{ secrets.PLAYLIST_URBAN }}
+          FREESOUND_TOKEN_B64:    ${{ secrets.FREESOUND_TOKEN_B64 }}
+          FREESOUND_CLIENT_ID:    ${{ secrets.FREESOUND_CLIENT_ID }}
+          FREESOUND_CLIENT_SECRET: ${{ secrets.FREESOUND_CLIENT_SECRET }}
         run: python run_pipeline.py
 
       - name: Save logs
