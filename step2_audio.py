@@ -1,454 +1,628 @@
 """
-STEP 1 — Metadata Generator (3-provider cascade)
-Providers: Groq → Mistral → Gemini → fallback
-All content in English for maximum CPM reach.
+STEP 2 — Audio Generator
+========================
+3 major improvements over previous version:
+
+1. RANDOM PAGINATION on Freesound — same query, different sounds every run
+2. LAYERED SOUND RECIPES — 2-3 sounds mixed at different volumes per category
+3. MULTIPLE QUERIES per theme — rotated randomly for variety
+
+Audio sources by category:
+  ambient (rain/nature/cozy/study/urban): Freesound → Pixabay → Archive
+  jazz:                                   Jamendo → ccMixter → Freesound
+  focus_noise:                            Generated locally with numpy
 """
-import json, os, random, argparse, re
-from datetime import datetime
+import os, json, glob, time, random, requests
+from pydub import AudioSegment
+from pydub.effects import normalize
+from io import BytesIO
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DURATIONS = [2, 3, 4]
+FREESOUND_KEY = os.environ.get("FREESOUND_API_KEY", "")
+JAMENDO_KEY   = os.environ.get("JAMENDO_CLIENT_ID", "")
+PIXABAY_KEY   = os.environ.get("PIXABAY_API_KEY", "")
 
-THEMES = {
-    "rain": [
-        {"theme": "heavy rain on window at night",   "query": "heavy rain window",      "pexels": "rain window night"},
-        {"theme": "gentle rain in forest",           "query": "gentle rain forest",     "pexels": "forest rain"},
-        {"theme": "distant thunderstorm with rain",  "query": "distant thunder rain",   "pexels": "storm clouds rain"},
-        {"theme": "rain on rooftop",                 "query": "rain rooftop",           "pexels": "rain rooftop"},
-        {"theme": "rain on car roof while parked",   "query": "rain car",               "pexels": "rain car window"},
-        {"theme": "light drizzle at night city",     "query": "light rain city night",  "pexels": "city rain night"},
-        {"theme": "rain on tent in forest",          "query": "rain tent camping",      "pexels": "tent forest rain"},
-        {"theme": "rain on lake surface",            "query": "rain lake water",        "pexels": "rain lake"},
-    ],
-    "nature": [
-        {"theme": "soft forest ambience with gentle birds",  "query": "forest birds soft ambience",  "pexels": "misty forest morning"},
-        {"theme": "ocean waves on sandy beach",              "query": "ocean waves beach soft",      "pexels": "ocean waves sandy beach"},
-        {"theme": "gentle river flowing through forest",     "query": "river stream forest",         "pexels": "river forest"},
-        {"theme": "distant waterfall in forest",             "query": "waterfall distant forest",    "pexels": "waterfall forest"},
-        {"theme": "wind through pine trees softly",          "query": "wind pine trees gentle",      "pexels": "pine forest wind"},
-        {"theme": "calm birds singing at dawn",              "query": "birds dawn morning gentle",   "pexels": "sunrise forest birds"},
-        {"theme": "mountain stream babbling",                "query": "mountain stream babbling",    "pexels": "mountain stream"},
-        {"theme": "summer meadow soft breeze",               "query": "meadow breeze summer",        "pexels": "green meadow summer"},
-    ],
-    "cozy": [
-        {"theme": "cozy coffee shop ambience morning",     "query": "coffee shop cafe ambience",     "pexels": "cozy coffee shop"},
-        {"theme": "fireplace crackling cozy indoors",      "query": "fireplace crackling wood fire", "pexels": "fireplace cozy"},
-        {"theme": "quiet library ambience soft",           "query": "library quiet ambience",        "pexels": "cozy library books"},
-        {"theme": "japanese tea house ambience",           "query": "tea house soft ambience",       "pexels": "japanese tea house"},
-        {"theme": "bookstore with rain outside",           "query": "bookstore indoor ambience",     "pexels": "bookstore cozy rain"},
-        {"theme": "cozy cabin during snowstorm",           "query": "cabin indoor fire snow",        "pexels": "cabin snow winter cozy"},
-        {"theme": "bakery ambience early morning",         "query": "bakery morning ambience",       "pexels": "bakery morning"},
-        {"theme": "rainy afternoon indoors with kettle",   "query": "indoor rain kettle soft",       "pexels": "cozy home rain"},
-        {"theme": "vintage reading nook with fireplace",   "query": "fireplace crackling gentle",    "pexels": "reading nook vintage books"},
-        {"theme": "cozy bed and breakfast morning",        "query": "morning indoor soft ambience",  "pexels": "cozy morning bedroom"},
-    ],
-    "jazz": [
-        {"theme": "late night jazz cafe",              "query": "jazz cafe night instrumental",    "tags": "jazz",        "pexels": "jazz cafe night"},
-        {"theme": "smooth piano jazz for relaxation",  "query": "smooth jazz piano instrumental",  "tags": "piano jazz",  "pexels": "grand piano low light"},
-        {"theme": "soft jazz with gentle rain",        "query": "soft jazz instrumental mellow",   "tags": "jazz",        "pexels": "jazz rain window"},
-        {"theme": "bossa nova instrumental morning",   "query": "bossa nova instrumental",         "tags": "bossanova",   "pexels": "coffee morning sunlight"},
-        {"theme": "mellow jazz guitar evening",        "query": "jazz guitar mellow instrumental", "tags": "jazz guitar", "pexels": "guitar low light evening"},
-        {"theme": "slow jazz piano bar night",         "query": "jazz piano bar slow",             "tags": "jazz piano",  "pexels": "piano bar night"},
-        {"theme": "peaceful jazz trio afternoon",      "query": "jazz trio acoustic peaceful",     "tags": "jazz",        "pexels": "jazz musician"},
-        {"theme": "winter jazz by the fireplace",      "query": "jazz warm cozy instrumental",     "tags": "jazz",        "pexels": "fireplace winter cozy"},
-    ],
-    "focus_noise": [
-        {"theme": "brown noise for deep focus",        "noise_type": "brown", "pexels": "minimalist desk study"},
-        {"theme": "white noise for concentration",     "noise_type": "white", "pexels": "clean minimal workspace"},
-        {"theme": "pink noise for studying",           "noise_type": "pink",  "pexels": "student studying calm"},
-        {"theme": "soft brown noise for sleep",        "noise_type": "brown", "pexels": "bedroom night peaceful"},
-        {"theme": "gentle white noise for baby sleep", "noise_type": "white", "pexels": "peaceful nursery soft light"},
-        {"theme": "brown noise with distant rain",     "noise_type": "brown", "pexels": "rainy window night desk"},
-    ],
-    "study": [
-        {"theme": "late night study session with rain",  "query": "study rain indoor soft",     "pexels": "desk lamp study rain"},
-        {"theme": "quiet library late at night",         "query": "library quiet night",        "pexels": "library night lamp"},
-        {"theme": "morning study cafe with soft music",  "query": "cafe morning soft ambience", "pexels": "cafe morning study"},
-        {"theme": "focused study room afternoon",        "query": "indoor quiet focus room",    "pexels": "study room afternoon light"},
-    ],
-    "urban": [
-        {"theme": "rainy night in tokyo",             "query": "rain city night japan",      "pexels": "tokyo rain night"},
-        {"theme": "paris cafe terrace evening",       "query": "paris cafe outdoor evening", "pexels": "paris cafe evening"},
-        {"theme": "new york apartment rain at night", "query": "city rain night apartment",  "pexels": "new york apartment rain"},
-        {"theme": "london evening rain street",       "query": "london rain evening street", "pexels": "london rain evening"},
-    ],
+TARGET_LUFS    = -18
+CROSSFADE_MS   = 6000
+FADE_IN_MS     = 20000
+FADE_OUT_MS    = 30000
+MIN_SAMPLE_SEC = 20
+SAMPLE_RATE    = 44100
+
+BAD_TAGS = {
+    "voice","speech","talking","conversation","song","singing",
+    "vocal","lyrics","glitch","error","test","beep","alarm",
+    "scream","cry","laugh","crowd","traffic","engine","machine",
+    "electric","digital","synth","electronic","distortion",
+    "frog","cricket","insect","cicada",
 }
 
 # ─────────────────────────────────────────────────────────
-# SERIES COUNTER — tracks volume per category for series titles
+# SOUND RECIPES — layered mixing per category
+# Each recipe has a primary layer + optional ambient layers.
+# Layers are mixed at specified dB reduction from primary.
+#
+# Format per category:
+#   {
+#     "primary":  [list of query options — one picked randomly],
+#     "layers": [
+#       {"queries": [...], "db_reduction": -12}   # softer layer
+#     ]
+#   }
 # ─────────────────────────────────────────────────────────
-SERIES_FILE = "series_counter.json"
+SOUND_RECIPES = {
+    "rain": {
+        "primary": [
+            "heavy rain window night",
+            "rain window glass indoor",
+            "rain rooftop night steady",
+            "pouring rain outside window",
+        ],
+        "layers": [
+            {"queries": ["distant thunder low rumble","thunder far away soft"], "db_reduction": -14},
+            {"queries": ["indoor room tone ambience quiet","quiet room interior"], "db_reduction": -20},
+        ],
+    },
+    "nature": {
+        "primary": [
+            "forest ambience birds gentle morning",
+            "woodland birds soft dawn",
+            "forest nature birds peaceful",
+            "deep forest morning gentle",
+        ],
+        "layers": [
+            {"queries": ["stream water flowing gentle","babbling brook soft"], "db_reduction": -10},
+            {"queries": ["wind through trees gentle","breeze leaves soft"], "db_reduction": -16},
+        ],
+    },
+    "cozy": {
+        "primary": [
+            "coffee shop cafe ambience background",
+            "cafe indoor background quiet",
+            "coffee shop morning soft murmur",
+            "cafe restaurant gentle background",
+        ],
+        "layers": [
+            {"queries": ["fireplace crackling wood fire","fire crackling gentle"], "db_reduction": -11},
+            {"queries": ["vinyl record noise crackle","vinyl crackle soft"], "db_reduction": -18},
+        ],
+    },
+    "study": {
+        "primary": [
+            "library quiet indoor ambience",
+            "quiet study room indoor",
+            "library night quiet peaceful",
+            "indoor quiet room soft",
+        ],
+        "layers": [
+            {"queries": ["rain window soft gentle","rain outside window"], "db_reduction": -10},
+            {"queries": ["page turning book soft","pencil writing paper"], "db_reduction": -20},
+        ],
+    },
+    "urban": {
+        "primary": [
+            "city night ambience quiet",
+            "urban night sounds distant",
+            "city street night gentle",
+            "night city ambient distant",
+        ],
+        "layers": [
+            {"queries": ["rain city street night","rain on pavement urban"], "db_reduction": -8},
+            {"queries": ["distant bar music muffled","muffled music distant cafe"], "db_reduction": -20},
+        ],
+    },
+    "jazz": {
+        "primary_jamendo_tags": [
+            "jazz", "piano jazz", "jazz piano", "bossanova", "jazz guitar",
+        ],
+        "layers": [
+            {"queries": ["bar cafe ambience background soft","jazz club ambience"], "db_reduction": -14},
+            {"queries": ["rain window soft","gentle rain indoor"], "db_reduction": -18},
+        ],
+    },
+    "focus_noise": {
+        "noise_type": "brown",
+        "layers": [
+            {"queries": ["distant rain soft","rain far away gentle"], "db_reduction": -16},
+        ],
+    },
+}
 
-def get_series_number(category):
-    counters = {}
-    if os.path.exists(SERIES_FILE):
+
+# ══════════════════════════════════════════════════════════
+# FREESOUND — random page for variety every run
+# ══════════════════════════════════════════════════════════
+def freesound_search(query, num=8, randomize_page=True):
+    if not FREESOUND_KEY:
+        raise ValueError("FREESOUND_API_KEY not set")
+
+    # Random page = different sounds every run for the same query
+    page = random.randint(1, 5) if randomize_page else 1
+    print(f"   [Freesound] '{query}' (page {page})")
+
+    r = requests.get("https://freesound.org/apiv2/search/text/", params={
+        "query":     query,
+        "token":     FREESOUND_KEY,
+        "fields":    "id,name,previews,duration,license,tags,avg_rating,num_ratings,num_downloads",
+        "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 480] license:(\"Creative Commons 0\" OR \"Attribution\")",
+        "sort":      "rating_desc",
+        "page_size": 15,
+        "page":      page,
+    }, timeout=30)
+    r.raise_for_status()
+    results = r.json().get("results", [])
+
+    clean = [s for s in results
+             if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
+             and s.get("num_ratings", 0) >= 1]
+    clean.sort(
+        key=lambda s: s.get("avg_rating", 0) * min(s.get("num_downloads", 0) / 500, 5),
+        reverse=True,
+    )
+    # Shuffle top results slightly for more variety
+    top = clean[:max(num * 2, 10)]
+    random.shuffle(top)
+    chosen = top[:num]
+    print(f"   -> {len(results)} found, {len(chosen)} selected (page {page})")
+    return chosen
+
+
+def freesound_download(sound, folder="audio_tmp"):
+    os.makedirs(folder, exist_ok=True)
+    url = sound["previews"].get("preview-hq-mp3") or sound["previews"].get("preview-lq-mp3")
+    if not url:
+        return None
+    path = os.path.join(folder, f"fs_{sound['id']}.mp3")
+    if os.path.exists(path):
+        return path
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    with open(path, "wb") as f:
+        f.write(r.content)
+    time.sleep(0.3)
+    return path
+
+
+def fetch_freesound_audio(query, num=8):
+    """Fetches sounds from Freesound and returns processed segments."""
+    sounds = freesound_search(query, num=num)
+    if not sounds:
+        raise RuntimeError(f"Freesound: no sounds for '{query}'")
+    files = [freesound_download(s) for s in sounds]
+    files = [f for f in files if f]
+    if not files:
+        raise RuntimeError("Freesound: download failed")
+    return load_segments(files, channels=1)
+
+
+# ══════════════════════════════════════════════════════════
+# PIXABAY AUDIO — fallback ambient
+# ══════════════════════════════════════════════════════════
+def pixabay_audio_search(query, num=8):
+    if not PIXABAY_KEY:
+        raise ValueError("PIXABAY_API_KEY not set")
+    print(f"   [Pixabay Audio] '{query}'")
+    r = requests.get("https://pixabay.com/api/sounds/", params={
+        "key": PIXABAY_KEY, "q": query, "per_page": num,
+    }, timeout=30)
+    r.raise_for_status()
+    hits = r.json().get("hits", [])
+    print(f"   -> {len(hits)} found")
+    return hits
+
+
+def pixabay_download(hit, folder="audio_tmp"):
+    os.makedirs(folder, exist_ok=True)
+    url = hit.get("audio") or hit.get("audioURL")
+    if not url:
+        for k, v in hit.items():
+            if isinstance(v, str) and v.endswith(".mp3"):
+                url = v
+                break
+    if not url:
+        return None
+    path = os.path.join(folder, f"pb_{hit['id']}.mp3")
+    if os.path.exists(path):
+        return path
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    with open(path, "wb") as f:
+        f.write(r.content)
+    time.sleep(0.3)
+    return path
+
+
+def fetch_pixabay_audio(query, num=8):
+    hits = pixabay_audio_search(query, num=num)
+    if not hits:
+        raise RuntimeError(f"Pixabay: no sounds for '{query}'")
+    files = [pixabay_download(h) for h in hits]
+    files = [f for f in files if f]
+    if not files:
+        raise RuntimeError("Pixabay: download failed")
+    return load_segments(files, channels=1)
+
+
+# ══════════════════════════════════════════════════════════
+# INTERNET ARCHIVE — last fallback
+# ══════════════════════════════════════════════════════════
+def fetch_archive_audio(query, num=6):
+    print(f"   [Internet Archive] '{query}'")
+    r = requests.get("https://archive.org/advancedsearch.php", params={
+        "q": f"{query} AND mediatype:audio AND format:MP3",
+        "fl": "identifier,title",
+        "rows": num, "output": "json",
+    }, timeout=30)
+    r.raise_for_status()
+    docs = r.json().get("response", {}).get("docs", [])
+    print(f"   -> {len(docs)} items")
+
+    files = []
+    for doc in docs:
+        identifier = doc.get("identifier", "")
+        if not identifier:
+            continue
         try:
-            with open(SERIES_FILE) as f:
-                counters = json.load(f)
-        except Exception:
-            counters = {}
-    counters[category] = counters.get(category, 0) + 1
-    with open(SERIES_FILE, "w") as f:
-        json.dump(counters, f)
-    return counters[category]
+            meta = requests.get(f"https://archive.org/metadata/{identifier}", timeout=15)
+            mp3s = [f for f in meta.json().get("files", [])
+                    if f.get("name", "").endswith(".mp3")]
+            if not mp3s:
+                continue
+            mp3s.sort(key=lambda f: int(f.get("size", 9999999999)))
+            target = mp3s[0]
+            url  = f"https://archive.org/download/{identifier}/{target['name']}"
+            path = os.path.join("audio_tmp", f"ia_{identifier[:20]}.mp3")
+            os.makedirs("audio_tmp", exist_ok=True)
+            if not os.path.exists(path):
+                r2 = requests.get(url, timeout=120, stream=True)
+                r2.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r2.iter_content(32768):
+                        f.write(chunk)
+            files.append(path)
+        except Exception as e:
+            print(f"   IA item error: {e}")
 
-# ─────────────────────────────────────────────────────────
-# USED THEMES TRACKER — avoids repeating themes
-# ─────────────────────────────────────────────────────────
-USED_THEMES_FILE = "used_themes.json"
+    if not files:
+        raise RuntimeError("Archive: no files downloaded")
+    return load_segments(files, channels=1)
 
-def get_used_themes():
-    if os.path.exists(USED_THEMES_FILE):
+
+# ══════════════════════════════════════════════════════════
+# JAMENDO — jazz instrumental
+# ══════════════════════════════════════════════════════════
+def fetch_jamendo(tags, num=12):
+    if not JAMENDO_KEY:
+        raise ValueError("JAMENDO_CLIENT_ID not set")
+
+    attempts = list(dict.fromkeys([tags, "jazz", "piano", "acoustic", "instrumental"]))
+    for attempt in attempts:
+        print(f"   [Jamendo] tags='{attempt}'")
         try:
-            with open(USED_THEMES_FILE) as f:
-                return json.load(f)
+            r = requests.get("https://api.jamendo.com/v3.0/tracks/", params={
+                "client_id":         JAMENDO_KEY,
+                "format":            "json",
+                "limit":             num,
+                "tags":              attempt,
+                "audioformat":       "mp31",
+                "boost":             "popularity_month",
+                "vocalinstrumental": "instrumental",
+                "offset":            random.randint(0, 50),  # variety
+            }, timeout=30)
+            r.raise_for_status()
+            results = r.json().get("results", [])
+            print(f"   -> {len(results)} tracks")
+            if results:
+                random.shuffle(results)
+                files = []
+                for t in results[:10]:
+                    url = t.get("audio")
+                    if not url:
+                        continue
+                    path = os.path.join("audio_tmp", f"jm_{t['id']}.mp3")
+                    os.makedirs("audio_tmp", exist_ok=True)
+                    if not os.path.exists(path):
+                        print(f"   -> {t.get('name','')[:45]}")
+                        r2 = requests.get(url, timeout=120, stream=True)
+                        r2.raise_for_status()
+                        with open(path, "wb") as f:
+                            for chunk in r2.iter_content(32768):
+                                f.write(chunk)
+                        time.sleep(0.5)
+                    files.append(path)
+                if files:
+                    return load_segments(files, channels=2)
+        except Exception as e:
+            print(f"   Jamendo error '{attempt}': {e}")
+    raise RuntimeError("Jamendo: no results after all fallbacks")
+
+
+# ══════════════════════════════════════════════════════════
+# CCMIXTER — jazz fallback
+# ══════════════════════════════════════════════════════════
+def fetch_ccmixter(query="jazz instrumental", num=12):
+    print(f"   [ccMixter] '{query}'")
+    try:
+        r = requests.get("http://ccmixter.org/api/query", params={
+            "tags": query, "type": "instrumentals",
+            "format": "json", "limit": num, "sort": "rank",
+        }, timeout=30)
+        r.raise_for_status()
+        results = r.json() if isinstance(r.json(), list) else []
+        print(f"   -> {len(results)} tracks")
+        if not results:
+            raise RuntimeError("ccMixter: no results")
+        random.shuffle(results)
+        files = []
+        for t in results[:8]:
+            for fdata in t.get("files", []):
+                url = fdata.get("download_url") or fdata.get("file_page_url")
+                if url and url.endswith(".mp3"):
+                    tid = str(t.get("upload_id", random.randint(1000, 9999)))
+                    path = os.path.join("audio_tmp", f"cc_{tid}.mp3")
+                    os.makedirs("audio_tmp", exist_ok=True)
+                    if not os.path.exists(path):
+                        try:
+                            r2 = requests.get(url, timeout=120, stream=True, allow_redirects=True)
+                            r2.raise_for_status()
+                            with open(path, "wb") as f:
+                                for chunk in r2.iter_content(32768):
+                                    f.write(chunk)
+                            if os.path.getsize(path) < 10000:
+                                os.remove(path)
+                                continue
+                        except Exception:
+                            continue
+                    files.append(path)
+                    break
+        if not files:
+            raise RuntimeError("ccMixter: no files downloaded")
+        return load_segments(files, channels=2)
+    except Exception as e:
+        raise RuntimeError(f"ccMixter failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════
+# NUMPY — focus noise (locally generated, perfect quality)
+# ══════════════════════════════════════════════════════════
+def generate_brown_noise(duration_ms):
+    import numpy as np
+    n = int(SAMPLE_RATE * duration_ms / 1000)
+    def _brown(seed_offset=0):
+        rng   = np.random.default_rng(int(time.time() * 1000) % 999999 + seed_offset)
+        white = rng.normal(0, 1, n)
+        b     = np.cumsum(white)
+        b    -= np.mean(b)
+        b    /= (np.max(np.abs(b)) + 1e-8)
+        return (b * 0.5 * 32767).astype(np.int16)
+    stereo = np.column_stack([_brown(0), _brown(7)]).flatten()
+    return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
+
+def generate_white_noise(duration_ms):
+    import numpy as np
+    n = int(SAMPLE_RATE * duration_ms / 1000)
+    rng = np.random.default_rng(int(time.time() * 1000) % 999999)
+    L = np.clip(rng.normal(0, 0.15, n), -1, 1)
+    R = np.clip(rng.normal(0, 0.15, n), -1, 1)
+    stereo = np.column_stack([(L * 32767).astype(np.int16), (R * 32767).astype(np.int16)]).flatten()
+    return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
+
+def generate_pink_noise(duration_ms):
+    import numpy as np
+    n = int(SAMPLE_RATE * duration_ms / 1000)
+    def _pink():
+        f = np.fft.rfftfreq(n, d=1/SAMPLE_RATE)
+        f[0] = 1
+        power = 1 / np.sqrt(f); power[0] = 0
+        phase = np.random.uniform(0, 2 * np.pi, len(f))
+        p = np.fft.irfft(power * np.exp(1j * phase), n=n)
+        p /= (np.max(np.abs(p)) + 1e-8)
+        return (p * 0.5 * 32767).astype(np.int16)
+    stereo = np.column_stack([_pink(), _pink()]).flatten()
+    return AudioSegment(stereo.tobytes(), frame_rate=SAMPLE_RATE, sample_width=2, channels=2)
+
+def build_noise(noise_type, duration_hours):
+    print(f"   Generating {noise_type} noise ({duration_hours}h)...")
+    block_ms  = 10 * 60 * 1000
+    target_ms = duration_hours * 3600 * 1000
+    n_blocks  = (target_ms // block_ms) + 2
+    gen = {"white": generate_white_noise, "brown": generate_brown_noise, "pink": generate_pink_noise}
+    fn  = gen.get(noise_type, generate_brown_noise)
+    combined = AudioSegment.empty()
+    for i in range(n_blocks):
+        block    = fn(block_ms)
+        combined = combined.append(block, crossfade=3000) if len(combined) > 0 else combined + block
+        print(f"   {min(100, len(combined)/target_ms*100):.0f}%", end="\r")
+    print()
+    return combined[:target_ms]
+
+
+# ══════════════════════════════════════════════════════════
+# AUDIO PROCESSING
+# ══════════════════════════════════════════════════════════
+def load_segments(files, channels=1):
+    """Load audio files into normalized AudioSegment list."""
+    segments = []
+    for f in files:
+        try:
+            seg = AudioSegment.from_mp3(f)
+            seg = seg.set_channels(channels).set_frame_rate(SAMPLE_RATE)
+            seg = normalize(seg)
+            if len(seg) < MIN_SAMPLE_SEC * 1000:
+                continue
+            segments.append(seg)
+            print(f"   + {os.path.basename(f)} ({len(seg)/1000:.0f}s)")
+        except Exception as e:
+            print(f"   ! {f}: {e}")
+    if not segments:
+        raise RuntimeError("No valid segments after processing")
+    return segments
+
+
+def loop_to_duration(segments, duration_hours):
+    """Loop segments with smooth crossfade until target duration."""
+    target_ms = duration_hours * 3600 * 1000
+    random.shuffle(segments)
+    combined  = AudioSegment.empty()
+    i = 0
+    while len(combined) < target_ms:
+        seg            = segments[i % len(segments)]
+        safe_crossfade = min(CROSSFADE_MS, len(seg) // 4)
+        combined       = combined.append(seg, crossfade=safe_crossfade) if len(combined) > 0 else combined + seg
+        i += 1
+        if i % 5 == 0:
+            print(f"   {min(100, len(combined)/target_ms*100):.0f}% ({len(combined)//60000}min)")
+    return combined[:target_ms]
+
+
+def mix_layer(base, layer_segs, db_reduction, duration_hours):
+    """
+    Overlays a softer layer on top of the base audio.
+    db_reduction: how many dB quieter the layer is (e.g. -12 = 12dB softer)
+    """
+    try:
+        layer = loop_to_duration(layer_segs, duration_hours)
+        layer = normalize(layer) + db_reduction  # make it quieter
+        # Match channels
+        if base.channels != layer.channels:
+            layer = layer.set_channels(base.channels)
+        result = base.overlay(layer)
+        print(f"   Layer mixed at {db_reduction}dB")
+        return result
+    except Exception as e:
+        print(f"   Layer skipped: {e}")
+        return base
+
+
+def finalize_audio(combined, output="output_audio.mp3"):
+    print("\n   Finalizing audio...")
+    combined = combined.fade_in(FADE_IN_MS).fade_out(FADE_OUT_MS)
+    combined = normalize(combined)
+    db = combined.dBFS
+    if db < TARGET_LUFS - 3:
+        combined = combined + (TARGET_LUFS - db)
+    combined = combined.set_frame_rate(SAMPLE_RATE)
+    combined.export(output, format="mp3", bitrate="192k",
+                    tags={"artist": "Nocturne Noise", "album": "Nocturne Noise Collection"})
+    mb = os.path.getsize(output) / (1024 * 1024)
+    print(f"   Done: {output} ({mb:.0f}MB, {len(combined)/3600000:.1f}h)")
+    return output
+
+
+def cleanup_tmp():
+    for f in glob.glob("audio_tmp/*.mp3"):
+        try:
+            os.remove(f)
         except Exception:
             pass
-    return []
-
-def mark_theme_used(theme_name):
-    used = get_used_themes()
-    all_themes = [t["theme"] for cat in THEMES.values() for t in cat]
-    used.append(theme_name)
-    # Reset when all themes have been used
-    if len(used) >= len(all_themes):
-        used = [theme_name]
-    with open(USED_THEMES_FILE, "w") as f:
-        json.dump(used, f)
-
-# ─────────────────────────────────────────────────────────
-# HASHTAGS PER CATEGORY
-# ─────────────────────────────────────────────────────────
-CATEGORY_HASHTAGS = {
-    "rain":        "#rainysounds #sleepsounds #rainambience",
-    "nature":      "#naturesounds #ambientmusic #relaxingsounds",
-    "cozy":        "#cozysounds #cafeambience #lofi",
-    "jazz":        "#jazzmusic #instrumentaljazz #jazzambience",
-    "focus_noise": "#brownnoise #whitenoise #focusmusic",
-    "study":       "#studymusic #focussounds #lofi",
-    "urban":       "#cityambience #urbansounds #nightambience",
-}
-
-# ─────────────────────────────────────────────────────────
-# CREATIVE FALLBACK TITLES — varied, not generic
-# ─────────────────────────────────────────────────────────
-FALLBACK_TITLES = {
-    "rain": [
-        "It's 3AM and it won't stop raining",
-        "You forgot to close the window",
-        "The rain started while you were reading",
-        "Rain on the window while you sleep",
-        "It's been raining since this morning",
-        "A rainy night, nothing to worry about",
-    ],
-    "nature": [
-        "Somewhere in a forest, far from everything",
-        "The river has been running for a thousand years",
-        "You found a clearing in the woods",
-        "Birds were singing before you woke up",
-        "A quiet morning at the edge of the forest",
-        "The waterfall you heard before you saw it",
-    ],
-    "cozy": [
-        "A quiet corner of the café",
-        "The fireplace is still going",
-        "Nobody else is in the library right now",
-        "Stay in tonight",
-        "The kettle is on, sit down",
-        "A warm place while it's cold outside",
-        "The café is almost empty now",
-    ],
-    "jazz": [
-        "Late night jazz for nobody in particular",
-        "The last set of the night",
-        "The piano player stayed after closing",
-        "A jazz bar somewhere in Paris",
-        "One more song before we go",
-        "Slow jazz for a slow evening",
-    ],
-    "focus_noise": [
-        "Block everything out",
-        "Just you and the work",
-        "The noise that helps you disappear",
-        "Everything else fades",
-        "Deep in the work",
-        "Quiet enough to think",
-    ],
-    "study": [
-        "The library at midnight",
-        "One more chapter",
-        "You still have time",
-        "Late night, just you and the books",
-        "The desk lamp is still on",
-        "Studying while the world sleeps",
-    ],
-    "urban": [
-        "Tokyo at 3AM",
-        "The city from your window",
-        "Rain on the streets below",
-        "A city that never really sleeps",
-        "Somewhere out there, the night is still going",
-        "The last train already left",
-    ],
-}
-
-CATEGORY_CONTEXT = {
-    "rain":        ("sleep, relaxation, and stress relief",      "rain sounds, sleep sounds, relaxing rain"),
-    "nature":      ("relaxation, meditation, and mindfulness",   "nature sounds, calming nature, ambient sounds"),
-    "cozy":        ("relaxation, focus, and cozy comfort",       "cozy ambience, cafe sounds, background noise"),
-    "jazz":        ("late night focus, relaxation, and mood",    "jazz music, instrumental jazz, background jazz"),
-    "focus_noise": ("deep focus, studying, and sleep",           "brown noise, white noise, focus sounds"),
-    "study":       ("studying, concentration, and productivity", "study music, focus background, lofi ambience"),
-    "urban":       ("relaxation, mood, and urban comfort",       "city sounds, urban ambience, night sounds"),
-}
-
-SYSTEM_PROMPT = """You are a YouTube SEO specialist for a premium ambient/soundscape channel called 'Comfort Sounds'.
-Channel language: ENGLISH ONLY. All titles, descriptions and tags must be in English.
-Channel identity: warm, trustworthy, high-quality, peaceful. No clickbait, no ALL CAPS.
-Respond ONLY with valid JSON — no markdown, no code fences, no extra text."""
 
 
-def build_prompt(theme_data, category, duration_hours, series_num):
-    audience, support_kw = CATEGORY_CONTEXT[category]
-    dur_label = f"{duration_hours} Hours"
-    hashtags  = CATEGORY_HASHTAGS[category]
-
-    return f"""Generate YouTube metadata for an English-language comfort soundscape channel.
-
-Theme: "{theme_data['theme']}"
-Category: {category}
-Duration: {duration_hours} hours
-Series number: Vol. {series_num}
-Target audience: {audience}
-Keywords to weave in: {support_kw}
-Channel name: Comfort Sounds
-Channel URL: https://www.youtube.com/@ComfortSounds
-
-Rules for title:
-- Max 70 chars
-- DO NOT include the duration in the title
-- DO NOT include "Vol." in the title
-- Write a short, evocative, scene-setting title — like a story in one line
-- Warm, intimate, poetic tone — make the listener feel something
-- Write as if describing a moment, not a product
-- Good examples:
-  "It's 3AM and it won't stop raining"
-  "A quiet corner of the library"
-  "The café is almost empty now"
-  "Rain on the window while you sleep"
-  "Somewhere in a forest, far from everything"
-  "The fire is still going"
-  "Late night jazz for nobody in particular"
-  "You forgot to close the window"
-- Bad examples: "RELAXING RAIN SOUNDS 3 HOURS" (generic, shouting)
-  "Heavy Rain Ambience for Sleep" (product description, not a scene)
-
-Rules for description:
-- 400-500 chars total
-- First 2 lines: strong hook (shown before "more")
-- Include 3-4 natural keyword mentions
-- Include timestamps: 0:00 Intro\n0:30 {theme_data['theme'].title()}\n[duration] Fade out
-- End with: 🔔 Subscribe for new soundscapes every week.\n🎧 More sounds → https://www.youtube.com/@ComfortSounds\n{hashtags}
-
-Rules for tags (return as JSON array of strings):
-- Generate exactly 25 individual tags
-- Each tag is a standalone phrase — do NOT use commas inside a tag
-- All lowercase
-- No hashtags, no special characters
-- Mix: exact match, broad, long-tail
-
-Return ONLY this JSON:
-{{
-  "title": "...",
-  "description": "...",
-  "tags": ["tag one", "tag two", "tag three"],
-  "thumbnail_text": "max 4 words, warm, example: '{dur_label} of Rain'",
-  "youtube_category_id": "10"
-}}"""
-
-
-def clean_json(raw: str) -> dict:
-    raw = raw.strip()
-    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-    raw = raw.strip()
-    try:
-        return json.loads(raw)
-    except Exception:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
-        raise ValueError(f"Invalid JSON:\n{raw[:300]}")
-
-
-def call_groq(prompt):
-    import requests
-    key = os.environ.get("GROQ_API_KEY", "")
-    if not key: raise ValueError("GROQ_API_KEY not set")
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": "llama-3.3-70b-versatile",
-              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": prompt}],
-              "temperature": 0.7, "max_tokens": 1000},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-
-def call_mistral(prompt):
-    import requests
-    key = os.environ.get("MISTRAL_API_KEY", "")
-    if not key: raise ValueError("MISTRAL_API_KEY not set")
-    r = requests.post(
-        "https://api.mistral.ai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": "mistral-small-latest",
-              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": prompt}],
-              "temperature": 0.7, "max_tokens": 1000},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-
-def call_gemini(prompt):
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key: raise ValueError("GEMINI_API_KEY not set")
-    import google.generativeai as genai
-    genai.configure(api_key=key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(f"{SYSTEM_PROMPT}\n\n{prompt}")
-    return response.text
-
-
-PROVIDERS = [
-    ("Groq Llama 3.3 70B", call_groq),
-    ("Mistral Small",       call_mistral),
-    ("Gemini 1.5 Flash",    call_gemini),
-]
-
-
-def call_ai_cascade(prompt):
-    for name, fn in PROVIDERS:
+# ══════════════════════════════════════════════════════════
+# FETCH AMBIENT — cascade with fallbacks
+# ══════════════════════════════════════════════════════════
+def fetch_ambient(query):
+    """Try Freesound → Pixabay → Archive for ambient sounds."""
+    for name, fn, args in [
+        ("Freesound",        fetch_freesound_audio,  (query,)),
+        ("Pixabay Audio",    fetch_pixabay_audio,    (query,)),
+        ("Internet Archive", fetch_archive_audio,    (query,)),
+    ]:
         try:
-            print(f"   Trying: {name}...")
-            raw    = fn(prompt)
-            result = clean_json(raw)
-            # Validate tags are actual tags, not the example strings
-            tags = result.get("tags", [])
-            if tags and tags[0] in ("30 tags", "tag one", "lowercase"):
-                raise ValueError("Provider returned example tags instead of real ones")
-            print(f"   OK: {name}")
-            return result
+            print(f"\n   Trying {name}...")
+            return fn(*args)
         except Exception as e:
-            print(f"   Failed {name}: {e}")
-    print("   All providers failed. Using fallback.")
-    return None
+            print(f"   {name} failed: {e}")
+    raise RuntimeError(f"All ambient sources failed for '{query}'")
 
 
-def build_fallback_metadata(theme_data, category, duration_hours, series_num):
-    dur       = f"{duration_hours} Hours"
-    titles = FALLBACK_TITLES.get(category, ["A quiet place to rest"])
-    title  = random.choice(titles)
-    hashtags  = CATEGORY_HASHTAGS[category]
-    return {
-        "title": title[:70],
-        "description": (
-            f"Lose yourself in {duration_hours} hours of {theme_data['theme']}. "
-            f"Perfect for sleep, deep focus, and unwinding after a long day.\n\n"
-            f"0:00 Intro\n0:30 {theme_data['theme'].title()}\n\n"
-            f"🔔 Subscribe for new soundscapes every week.\n"
-            f"🎧 More sounds → https://www.youtube.com/@ComfortSounds\n"
-            f"{hashtags}"
-        ),
-        "tags": [
-            "relaxing sounds", "sleep sounds", "ambient music", "white noise",
-            "study music", "focus music", "lofi", "calm music", "meditation",
-            "soundscape", "sleep aid", "background music", "cozy vibes",
-            "nature sounds", "rain sounds", "stress relief", "chillout",
-            "work from home", "deep focus", "concentration", "peaceful",
-            "relax", "sleep meditation", "ambient noise", "comfort sounds",
-        ],
-        "thumbnail_text":      f"{dur} of {theme_data['theme'].split()[0].title()}",
-        "youtube_category_id": "10",
-        "_fallback":           True,
-    }
+def fetch_jazz(tags):
+    """Try Jamendo → ccMixter → Freesound for jazz."""
+    for name, fn, args in [
+        ("Jamendo",   fetch_jamendo,   (tags,)),
+        ("ccMixter",  fetch_ccmixter,  ("jazz instrumental",)),
+        ("Freesound", fetch_freesound_audio, ("jazz piano soft instrumental",)),
+    ]:
+        try:
+            print(f"\n   Trying {name}...")
+            return fn(*args)
+        except Exception as e:
+            print(f"   {name} failed: {e}")
+    raise RuntimeError("All jazz sources failed")
 
 
-def pick_theme(theme_override=None, category=None):
-    """Picks a theme, avoiding recently used ones."""
-    if category and category not in THEMES:
-        raise ValueError(f"Invalid category. Use: {list(THEMES.keys())}")
+# ══════════════════════════════════════════════════════════
+# MAIN — build audio with layered recipes
+# ══════════════════════════════════════════════════════════
+def main():
+    meta_files = sorted(glob.glob("metadata_*.json"), key=os.path.getmtime, reverse=True)
+    if not meta_files:
+        raise FileNotFoundError("Run step1_metadata.py first")
 
-    used = get_used_themes()
+    with open(meta_files[0]) as f:
+        metadata = json.load(f)
 
-    if category:
-        cat    = category
-        themes = THEMES[cat]
+    category   = metadata["category"]
+    duration   = metadata["duration_hours"]
+    theme_data = metadata.get("theme_data", {})
+    recipe     = SOUND_RECIPES.get(category, {})
+
+    print(f"\nGenerating audio: {metadata['theme']} ({duration}h)")
+    print(f"Category: {category}")
+
+    # ── Focus noise ────────────────────────────────────────
+    if category == "focus_noise":
+        noise_type = theme_data.get("noise_type", "brown")
+        combined   = build_noise(noise_type, duration)
+
+        # Optionally layer distant rain for warmth
+        for layer in recipe.get("layers", []):
+            query = random.choice(layer["queries"])
+            try:
+                layer_segs = fetch_ambient(query)
+                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+            except Exception as e:
+                print(f"   Focus layer skipped: {e}")
+
+    # ── Jazz ───────────────────────────────────────────────
+    elif category == "jazz":
+        tags       = theme_data.get("tags", "jazz")
+        primary    = fetch_jazz(tags)
+        combined   = loop_to_duration(primary, duration)
+
+        # Layer ambient sounds (bar, rain) underneath jazz
+        for layer in recipe.get("layers", []):
+            query = random.choice(layer["queries"])
+            try:
+                layer_segs = fetch_ambient(query)
+                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+            except Exception as e:
+                print(f"   Jazz layer skipped: {e}")
+
+    # ── Ambient (rain/nature/cozy/study/urban) ─────────────
     else:
-        # Pick directly from all themes (weighted by category size)
-        all_themes = [(t, cat) for cat, themes in THEMES.items() for t in themes]
-        unused     = [(t, c) for t, c in all_themes if t["theme"] not in used]
-        if not unused:
-            unused = all_themes  # reset if all used
-        chosen_theme, cat = random.choice(unused)
-        return chosen_theme, cat
+        # Pick a random primary query from recipe options
+        primary_queries = recipe.get("primary", [theme_data.get("query", metadata["theme"])])
+        primary_query   = random.choice(primary_queries)
+        print(f"\n   Primary query: '{primary_query}'")
 
-    if theme_override:
-        match = next((t for t in themes if theme_override.lower() in t["theme"].lower()), None)
-        return (match or themes[0]), cat
+        primary_segs = fetch_ambient(primary_query)
+        combined     = loop_to_duration(primary_segs, duration)
 
-    unused = [t for t in themes if t["theme"] not in used]
-    if not unused:
-        unused = themes
-    return random.choice(unused), cat
+        # Mix in each layer
+        for layer in recipe.get("layers", []):
+            query = random.choice(layer["queries"])
+            print(f"\n   Adding layer: '{query}'")
+            try:
+                layer_segs = fetch_ambient(query)
+                combined   = mix_layer(combined, layer_segs, layer["db_reduction"], duration)
+            except Exception as e:
+                print(f"   Layer skipped: {e}")
 
-
-def generate_metadata(theme_override=None, duration_hours=None, category=None):
-    theme_data, category = pick_theme(theme_override, category)
-    if not duration_hours:
-        duration_hours = random.choice(DURATIONS)
-
-    series_num = get_series_number(category)
-
-    print(f"\nTheme: {theme_data['theme']}")
-    print(f"Category: {category} | Duration: {duration_hours}h | Vol. {series_num}")
-
-    prompt   = build_prompt(theme_data, category, duration_hours, series_num)
-    metadata = call_ai_cascade(prompt)
-
-    if metadata is None:
-        metadata = build_fallback_metadata(theme_data, category, duration_hours, series_num)
-
-    metadata["theme"]          = theme_data["theme"]
-    metadata["theme_data"]     = theme_data
-    metadata["category"]       = category
-    metadata["duration_hours"] = duration_hours
-    metadata["series_num"]     = series_num
-    metadata["generated_at"]   = datetime.now().isoformat()
-
-    # Mark theme as used
-    mark_theme_used(theme_data["theme"])
-
-    fname = f"metadata_{theme_data['theme'][:30].replace(' ','_')}.json"
-    with open(fname, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-    print(f"Title: {metadata.get('title','')}")
-    print(f"Tags: {len(metadata.get('tags', []))} | Saved: {fname}\n")
-    return metadata
+    finalize_audio(combined, "output_audio.mp3")
+    cleanup_tmp()
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--theme",    type=str)
-    p.add_argument("--category", choices=list(THEMES.keys()))
-    p.add_argument("--duration", type=int, choices=DURATIONS)
-    args = p.parse_args()
-    generate_metadata(theme_override=args.theme, duration_hours=args.duration, category=args.category)
+    main()
