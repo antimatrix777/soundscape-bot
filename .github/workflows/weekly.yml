@@ -46,6 +46,13 @@ jobs:
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
           PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
           YT_TOKEN_B64:      ${{ secrets.YT_TOKEN_B64 }}
+          PLAYLIST_RAIN:     ${{ secrets.PLAYLIST_RAIN }}
+          PLAYLIST_NATURE:   ${{ secrets.PLAYLIST_NATURE }}
+          PLAYLIST_COZY:     ${{ secrets.PLAYLIST_COZY }}
+          PLAYLIST_JAZZ:     ${{ secrets.PLAYLIST_JAZZ }}
+          PLAYLIST_FOCUS:    ${{ secrets.PLAYLIST_FOCUS }}
+          PLAYLIST_STUDY:    ${{ secrets.PLAYLIST_STUDY }}
+          PLAYLIST_URBAN:    ${{ secrets.PLAYLIST_URBAN }}
         run: python run_pipeline.py
 
       - name: Save logs
