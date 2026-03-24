@@ -51,10 +51,10 @@ SOUND_RECIPES = {
     "rain": {
         "primary": [
             "heavy rain window night",
-            "rain window glass indoor",
-            "rain rooftop night steady",
-            "pouring rain outside window",
-            "rain on glass night ambient",
+            "rain window indoor",
+            "rain rooftop steady",
+            "heavy rain window",
+            "rain glass ambient",
         ],
         "layers": [
             {"queries": ["distant thunder low rumble","thunder far away soft"], "db_reduction": -14},
@@ -64,11 +64,11 @@ SOUND_RECIPES = {
     },
     "nature": {
         "primary": [
-            "forest ambience birds gentle morning",
-            "woodland birds soft dawn",
-            "forest nature birds peaceful",
-            "deep forest morning gentle",
-            "forest stream birds ambient",
+            "forest birds morning",
+            "birds forest dawn",
+            "forest birds peaceful",
+            "deep forest ambience",
+            "forest stream ambient",
         ],
         "layers": [
             {"queries": ["stream water flowing gentle","babbling brook soft"], "db_reduction": -10},
@@ -78,11 +78,11 @@ SOUND_RECIPES = {
     },
     "cozy": {
         "primary": [
-            "coffee shop cafe ambience background",
-            "cafe indoor background quiet",
-            "coffee shop morning soft murmur",
-            "cafe restaurant gentle background",
-            "coffee shop ambience soft talking distant",
+            "coffee shop ambience",
+            "cafe indoor quiet",
+            "coffee shop sounds",
+            "cafe ambient soft",
+            "cafe ambient soft",
         ],
         "layers": [
             {"queries": ["fireplace crackling wood fire","fire crackling gentle"], "db_reduction": -11},
@@ -94,8 +94,8 @@ SOUND_RECIPES = {
         "primary": [
             "library quiet indoor ambience",
             "quiet study room indoor",
-            "library night quiet peaceful",
-            "indoor quiet room soft",
+            "library quiet night",
+            "indoor quiet ambient",
         ],
         "layers": [
             {"queries": ["rain window soft gentle","rain outside window"], "db_reduction": -10},
@@ -105,10 +105,10 @@ SOUND_RECIPES = {
     },
     "urban": {
         "primary": [
-            "city night ambience quiet",
-            "urban night sounds distant",
-            "city street night gentle",
-            "night city ambient distant",
+            "city night ambience",
+            "urban night sounds",
+            "city street night",
+            "night city ambient",
         ],
         "layers": [
             {"queries": ["rain city street night","rain on pavement urban"], "db_reduction": -8},
@@ -195,7 +195,30 @@ def freesound_oauth_search(query, num=12):
     top = clean[:max(num * 2, 12)]
     random.shuffle(top)
     chosen = top[:num]
-    print(f"   -> {len(results)} found, {len(chosen)} selected")
+    # If no results with full query, retry with first 2 words
+    if not chosen and len(query.split()) > 2:
+        short_q = " ".join(query.split()[:2])
+        print(f"   Retrying with: '{short_q}'")
+        try:
+            r2 = requests.get("https://freesound.org/apiv2/search/text/", params={
+                "query":     short_q,
+                "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
+                "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 7200] license:(\"Creative Commons 0\" OR \"Attribution\")",
+                "sort":      "rating_desc",
+                "page_size": 15,
+                "page":      1,
+            }, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+            if r2.status_code == 200:
+                results2 = r2.json().get("results", [])
+                chosen   = [s for s in results2
+                            if not ({t.lower() for t in s.get("tags",[])} & BAD_TAGS)][:num]
+                print(f"   -> {len(chosen)} found with short query")
+        except Exception as e:
+            print(f"   Short query also failed: {e}")
+
+    if not chosen:
+        raise RuntimeError(f"Freesound OAuth: no sounds for '{query}'")
+    print(f"   -> {len(chosen)} selected total")
     return chosen
 
 
@@ -242,12 +265,22 @@ def fetch_pixabay_audio(query, num=10):
     if not PIXABAY_KEY:
         raise ValueError("PIXABAY_API_KEY not set")
     print(f"   [Pixabay Audio] '{query}'")
-    r = requests.get("https://pixabay.com/api/sounds/", params={
-        "key": PIXABAY_KEY, "q": query, "per_page": num,
-    }, timeout=30)
-    r.raise_for_status()
-    hits = r.json().get("hits", [])
-    print(f"   -> {len(hits)} found")
+    hits = []
+    for endpoint in [
+        "https://pixabay.com/api/sounds/",
+        "https://pixabay.com/api/videos/",
+    ]:
+        try:
+            r = requests.get(endpoint, params={
+                "key": PIXABAY_KEY, "q": query, "per_page": num,
+            }, timeout=30)
+            if r.status_code == 200:
+                hits = r.json().get("hits", [])
+                if hits:
+                    print(f"   -> {len(hits)} found")
+                    break
+        except Exception:
+            continue
     if not hits:
         raise RuntimeError(f"Pixabay: no sounds for '{query}'")
 
@@ -287,8 +320,24 @@ def fetch_archive_audio(query, num=6):
         "output": "json",
     }, timeout=30)
     r.raise_for_status()
-    docs = r.json().get("response", {}).get("docs", [])
-    print(f"   -> {len(docs)} items")
+    docs = []
+    for attempt_q in [query, " ".join(query.split()[:2])]:
+        try:
+            ra = requests.get("https://archive.org/advancedsearch.php", params={
+                "q":      f"{attempt_q} AND mediatype:audio AND format:MP3",
+                "fl":     "identifier,title",
+                "rows":   num,
+                "output": "json",
+            }, timeout=30)
+            if ra.status_code == 200:
+                docs = ra.json().get("response", {}).get("docs", [])
+                if docs:
+                    print(f"   -> {len(docs)} items ('{attempt_q}')")
+                    break
+        except Exception:
+            continue
+    if not docs:
+        print("   -> 0 items")
 
     os.makedirs("audio_tmp", exist_ok=True)
     files = []
