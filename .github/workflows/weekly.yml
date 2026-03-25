@@ -1,16 +1,34 @@
 name: 🌙 Nocturne Noise — Weekly Upload
 
+# ─────────────────────────────────────────────────────────
+# SCHEDULE STRATEGY (changed from Tue/Fri 10h BRT):
+#
+# NEW: Wednesday + Saturday at 21:00 UTC
+#
+# Why Wednesday + Saturday?
+#   - Wednesday = midweek stress peak → people actively seek relaxation
+#   - Saturday = weekend wind-down → highest ambient consumption globally
+#
+# Why 21:00 UTC?
+#   - 6:00 PM EST / 5:00 PM CST — US audience pre-dinner wind-down
+#   - 10:00 PM BST / 11:00 PM CEST — UK/EU prime ambient time
+#   - 7:00 AM AEST (Thu/Sun) — AU morning routine
+#   - YouTube indexes content within ~1h, so by US 7-9 PM peak it's fully indexed
+#   - For a sleep/ambient channel, this window captures all 3 major English markets
+#
+# Old schedule (Tue/Fri 13:00 UTC = 10h BRT) was optimized for Brazil,
+# not for the English-speaking audience the channel targets.
+# ─────────────────────────────────────────────────────────
 on:
   schedule:
-    - cron: '0 13 * * 2'   # Terca-feira 10h BRT
-    - cron: '0 13 * * 5'   # Sexta-feira 10h BRT
-  workflow_dispatch:
+    - cron: '0 21 * * 3'   # Wednesday  21:00 UTC = 6PM EST / 10PM BST
+    - cron: '0 21 * * 6'   # Saturday   21:00 UTC = 6PM EST / 10PM BST
+  workflow_dispatch:        # Manual trigger kept — useful for testing
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-
     permissions:
       contents: write
 
@@ -35,27 +53,27 @@ jobs:
 
       - name: Run pipeline
         env:
-          TOGETHER_API_KEY:  ${{ secrets.TOGETHER_API_KEY }}
-          FAL_API_KEY:       ${{ secrets.FAL_API_KEY }}
-          STABLE_HORDE_KEY:  ${{ secrets.STABLE_HORDE_KEY }}
-          GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
-          MISTRAL_API_KEY:   ${{ secrets.MISTRAL_API_KEY }}
-          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
-          FREESOUND_API_KEY: ${{ secrets.FREESOUND_API_KEY }}
-          PIXABAY_API_KEY:   ${{ secrets.PIXABAY_API_KEY }}
-          JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
-          PEXELS_API_KEY:    ${{ secrets.PEXELS_API_KEY }}
-          YT_TOKEN_B64:      ${{ secrets.YT_TOKEN_B64 }}
-          PLAYLIST_RAIN:     ${{ secrets.PLAYLIST_RAIN }}
-          PLAYLIST_NATURE:   ${{ secrets.PLAYLIST_NATURE }}
-          PLAYLIST_COZY:     ${{ secrets.PLAYLIST_COZY }}
-          PLAYLIST_JAZZ:     ${{ secrets.PLAYLIST_JAZZ }}
-          PLAYLIST_FOCUS:    ${{ secrets.PLAYLIST_FOCUS }}
-          PLAYLIST_STUDY:    ${{ secrets.PLAYLIST_STUDY }}
-          PLAYLIST_URBAN:    ${{ secrets.PLAYLIST_URBAN }}
-          FREESOUND_TOKEN_B64:    ${{ secrets.FREESOUND_TOKEN_B64 }}
-          FREESOUND_CLIENT_ID:    ${{ secrets.FREESOUND_CLIENT_ID }}
-          FREESOUND_CLIENT_SECRET: ${{ secrets.FREESOUND_CLIENT_SECRET }}
+          TOGETHER_API_KEY:         ${{ secrets.TOGETHER_API_KEY }}
+          FAL_API_KEY:              ${{ secrets.FAL_API_KEY }}
+          STABLE_HORDE_KEY:         ${{ secrets.STABLE_HORDE_KEY }}
+          GROQ_API_KEY:             ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY:          ${{ secrets.MISTRAL_API_KEY }}
+          GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}
+          FREESOUND_API_KEY:        ${{ secrets.FREESOUND_API_KEY }}
+          PIXABAY_API_KEY:          ${{ secrets.PIXABAY_API_KEY }}
+          JAMENDO_CLIENT_ID:        ${{ secrets.JAMENDO_CLIENT_ID }}
+          PEXELS_API_KEY:           ${{ secrets.PEXELS_API_KEY }}
+          YT_TOKEN_B64:             ${{ secrets.YT_TOKEN_B64 }}
+          PLAYLIST_RAIN:            ${{ secrets.PLAYLIST_RAIN }}
+          PLAYLIST_NATURE:          ${{ secrets.PLAYLIST_NATURE }}
+          PLAYLIST_COZY:            ${{ secrets.PLAYLIST_COZY }}
+          PLAYLIST_JAZZ:            ${{ secrets.PLAYLIST_JAZZ }}
+          PLAYLIST_FOCUS:           ${{ secrets.PLAYLIST_FOCUS }}
+          PLAYLIST_STUDY:           ${{ secrets.PLAYLIST_STUDY }}
+          PLAYLIST_URBAN:           ${{ secrets.PLAYLIST_URBAN }}
+          FREESOUND_TOKEN_B64:      ${{ secrets.FREESOUND_TOKEN_B64 }}
+          FREESOUND_CLIENT_ID:      ${{ secrets.FREESOUND_CLIENT_ID }}
+          FREESOUND_CLIENT_SECRET:  ${{ secrets.FREESOUND_CLIENT_SECRET }}
         run: python run_pipeline.py
 
       - name: Save logs
