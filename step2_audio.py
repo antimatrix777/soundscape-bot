@@ -6,16 +6,15 @@ Audio sources by category:
   jazz:    Jamendo → ccMixter → Freesound OAuth
   noise:   Generated locally with numpy (perfect quality)
 
-Key improvements:
-  - Freesound OAuth: downloads FULL files (minutes/hours) not 30s previews
-  - Pixabay as primary: curated, full files, no OAuth needed
-  - Internet Archive: picks LARGEST file (best quality), not smallest
-  - RMS normalization: preserves natural dynamics
-  - Haas stereo effect: depth for mono sources
-  - EQ: gentle high-shelf cut for rain/noise (reduces listening fatigue)
-  - Layer random offset: breaks sync patterns
-  - Jazz uses recipe tags for variety
-  - Bitrate: 128kbps ambient, 192kbps jazz
+FIXES vs previous version:
+  - BAD_TAGS expanded with vocal/speech terms (was incomplete)
+  - has_bad_content() helper filters filenames on all sources
+  - Pixabay now filters by title/tags before downloading
+  - Internet Archive now filters item title AND filename
+  - SOUND_RECIPES layers cleaned — removed voice-prone queries
+  - Freesound OAuth: BAD_TAGS filter was already working, kept
+  - RMS normalization, Haas stereo, EQ — unchanged
+  - Jazz: Jamendo vocalinstrumental=instrumental filter — unchanged
 """
 import os, json, glob, time, random, requests, base64
 from pydub import AudioSegment
@@ -36,16 +35,47 @@ TARGET_LUFS     = -18
 CROSSFADE_MS    = 6000
 FADE_IN_MS      = 20000
 FADE_OUT_MS     = 30000
-MIN_SAMPLE_SEC  = 45   # increased from 20s — longer samples = less looping
+MIN_SAMPLE_SEC  = 45
 SAMPLE_RATE     = 44100
 
+# ─────────────────────────────────────────────────────────
+# BAD_TAGS — used to filter out ANY audio with voice/speech/music
+# Applied to Freesound tags, Pixabay title/tags, Archive title/filename
+# ─────────────────────────────────────────────────────────
 BAD_TAGS = {
-    "voice","speech","talking","conversation","song","singing",
-    "vocal","lyrics","glitch","error","test","beep","alarm",
-    "scream","cry","laugh","crowd","traffic","engine","machine",
-    "electric","digital","synth","electronic","distortion",
-    "frog","cricket","insect","cicada",
+    # Voice & speech
+    "voice", "speech", "talking", "conversation", "spoken", "narrator",
+    "narration", "voiceover", "vocal", "vocals", "singing", "singer",
+    "song", "lyrics", "lyric", "words", "reading", "audiobook",
+    "podcast", "interview", "commentary", "announcement", "broadcast",
+    "radio", "news", "monologue", "dialogue", "chant",
+    # Music genres that typically have vocals
+    "rap", "hiphop", "hip hop", "folk", "pop", "rock", "blues",
+    "country", "rnb", "r&b", "soul", "reggae", "opera", "gospel",
+    "metal", "punk", "indie", "acoustic song",
+    # Technical artifacts
+    "glitch", "error", "test", "beep", "alarm", "sample", "remix",
+    # Disturbing/unwanted sounds
+    "scream", "cry", "laugh", "crowd", "traffic", "engine",
+    "machine", "electric", "digital", "synth", "electronic",
+    "distortion", "frog", "cricket", "insect", "cicada",
+    # Music-adjacent that implies vocals
+    "band", "concert", "performance", "live music",
 }
+
+# ─────────────────────────────────────────────────────────
+# FILENAME GUARD — last line of defense before loading a file
+# ─────────────────────────────────────────────────────────
+def has_bad_content(name: str) -> bool:
+    """Returns True if filename or title contains vocal/speech indicators."""
+    n = name.lower()
+    bad_words = [
+        "vocal", "voice", "speech", "spoken", "song", "lyric",
+        "podcast", "interview", "narrator", "rap", "singing",
+        "singer", "words", "talk", "broadcast", "radio",
+    ]
+    return any(w in n for w in bad_words)
+
 
 SOUND_RECIPES = {
     "rain": {
@@ -57,8 +87,8 @@ SOUND_RECIPES = {
             "rain glass ambient",
         ],
         "layers": [
-            {"queries": ["distant thunder low rumble","thunder far away soft"], "db_reduction": -14},
-            {"queries": ["indoor room tone ambience quiet","quiet room interior"], "db_reduction": -20},
+            {"queries": ["distant thunder low rumble", "thunder far away soft"], "db_reduction": -14},
+            {"queries": ["indoor room tone ambience quiet", "quiet room interior"], "db_reduction": -20},
         ],
         "eq": "high_cut",
     },
@@ -71,8 +101,8 @@ SOUND_RECIPES = {
             "forest stream ambient",
         ],
         "layers": [
-            {"queries": ["stream water flowing gentle","babbling brook soft"], "db_reduction": -10},
-            {"queries": ["wind through trees gentle","breeze leaves soft"], "db_reduction": -16},
+            {"queries": ["stream water flowing gentle", "babbling brook soft"], "db_reduction": -10},
+            {"queries": ["wind through trees gentle", "breeze leaves soft"], "db_reduction": -16},
         ],
         "eq": "natural",
     },
@@ -82,11 +112,11 @@ SOUND_RECIPES = {
             "cafe indoor quiet",
             "coffee shop sounds",
             "cafe ambient soft",
-            "cafe ambient soft",
         ],
         "layers": [
-            {"queries": ["fireplace crackling wood fire","fire crackling gentle"], "db_reduction": -11},
-            {"queries": ["vinyl record noise crackle","vinyl crackle soft"], "db_reduction": -18},
+            {"queries": ["fireplace crackling wood fire", "fire crackling gentle"], "db_reduction": -11},
+            # FIXED: removed "vinyl crackle" — often contains background music with vocals
+            {"queries": ["indoor room tone quiet", "quiet room ambience interior"], "db_reduction": -18},
         ],
         "eq": "natural",
     },
@@ -98,8 +128,8 @@ SOUND_RECIPES = {
             "indoor quiet ambient",
         ],
         "layers": [
-            {"queries": ["rain window soft gentle","rain outside window"], "db_reduction": -10},
-            {"queries": ["page turning book soft","pencil writing paper"], "db_reduction": -20},
+            {"queries": ["rain window soft gentle", "rain outside window"], "db_reduction": -10},
+            {"queries": ["page turning book paper", "pencil writing paper soft"], "db_reduction": -20},
         ],
         "eq": "natural",
     },
@@ -111,8 +141,9 @@ SOUND_RECIPES = {
             "night city ambient",
         ],
         "layers": [
-            {"queries": ["rain city street night","rain on pavement urban"], "db_reduction": -8},
-            {"queries": ["distant bar music muffled","muffled music distant cafe"], "db_reduction": -20},
+            # FIXED: removed "bar music muffled" and "cafe music distant" — too likely to include vocals
+            {"queries": ["rain city pavement", "rain urban street ambient"], "db_reduction": -8},
+            {"queries": ["distant traffic hum night", "city ambient hum quiet"], "db_reduction": -20},
         ],
         "eq": "natural",
     },
@@ -122,15 +153,16 @@ SOUND_RECIPES = {
             "smooth jazz", "acoustic jazz", "jazz quartet",
         ],
         "layers": [
-            {"queries": ["bar cafe ambience background soft","jazz club ambience"], "db_reduction": -14},
-            {"queries": ["rain window soft","gentle rain indoor"], "db_reduction": -18},
+            # FIXED: kept only clearly non-vocal ambient layers
+            {"queries": ["bar cafe ambience background quiet", "indoor cafe ambient soft"], "db_reduction": -14},
+            {"queries": ["rain window soft", "gentle rain indoor"], "db_reduction": -18},
         ],
         "eq": "natural",
     },
     "focus_noise": {
         "noise_type": "brown",
         "layers": [
-            {"queries": ["distant rain soft","rain far away gentle"], "db_reduction": -16},
+            {"queries": ["distant rain soft", "rain far away gentle"], "db_reduction": -16},
         ],
         "eq": "high_cut",
     },
@@ -141,15 +173,13 @@ SOUND_RECIPES = {
 # FREESOUND OAUTH — full file downloads
 # ══════════════════════════════════════════════════════════
 def get_freesound_token():
-    """Load and refresh Freesound OAuth token."""
     if not FREESOUND_TOKEN:
         raise ValueError("FREESOUND_TOKEN_B64 not set")
 
-    token_data = json.loads(base64.b64decode(FREESOUND_TOKEN).decode())
+    token_data    = json.loads(base64.b64decode(FREESOUND_TOKEN).decode())
     access_token  = token_data.get("access_token", "")
     refresh_token = token_data.get("refresh_token", "")
 
-    # Try to refresh token if we have client credentials
     if refresh_token and FREESOUND_CID and FREESOUND_CSEC:
         try:
             r = requests.post("https://freesound.org/apiv2/oauth2/access_token/", data={
@@ -169,7 +199,6 @@ def get_freesound_token():
 
 
 def freesound_oauth_search(query, num=12):
-    """Search Freesound with OAuth — gets full file metadata."""
     token = get_freesound_token()
     page  = random.randint(1, 4)
     print(f"   [Freesound OAuth] '{query}' (page {page})")
@@ -185,8 +214,10 @@ def freesound_oauth_search(query, num=12):
     r.raise_for_status()
     results = r.json().get("results", [])
 
+    # Apply BAD_TAGS filter + filename guard
     clean = [s for s in results
              if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
+             and not has_bad_content(s.get("name", ""))
              and s.get("num_ratings", 0) >= 1]
     clean.sort(
         key=lambda s: s.get("avg_rating", 0) * min(s.get("num_downloads", 0) / 500, 5),
@@ -195,7 +226,7 @@ def freesound_oauth_search(query, num=12):
     top = clean[:max(num * 2, 12)]
     random.shuffle(top)
     chosen = top[:num]
-    # If no results with full query, retry with first 2 words
+
     if not chosen and len(query.split()) > 2:
         short_q = " ".join(query.split()[:2])
         print(f"   Retrying with: '{short_q}'")
@@ -211,7 +242,8 @@ def freesound_oauth_search(query, num=12):
             if r2.status_code == 200:
                 results2 = r2.json().get("results", [])
                 chosen   = [s for s in results2
-                            if not ({t.lower() for t in s.get("tags",[])} & BAD_TAGS)][:num]
+                            if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
+                            and not has_bad_content(s.get("name", ""))][:num]
                 print(f"   -> {len(chosen)} found with short query")
         except Exception as e:
             print(f"   Short query also failed: {e}")
@@ -223,7 +255,6 @@ def freesound_oauth_search(query, num=12):
 
 
 def freesound_oauth_download(sound, folder="audio_tmp"):
-    """Download FULL audio file from Freesound using OAuth."""
     os.makedirs(folder, exist_ok=True)
     sound_id = sound["id"]
     path     = os.path.join(folder, f"fs_full_{sound_id}.mp3")
@@ -246,7 +277,6 @@ def freesound_oauth_download(sound, folder="audio_tmp"):
 
 
 def fetch_freesound_oauth(query, num=10):
-    """Fetch full Freesound files via OAuth."""
     sounds = freesound_oauth_search(query, num=num)
     if not sounds:
         raise RuntimeError(f"Freesound OAuth: no sounds for '{query}'")
@@ -259,7 +289,7 @@ def fetch_freesound_oauth(query, num=10):
 
 # ══════════════════════════════════════════════════════════
 # PIXABAY AUDIO — primary ambient source
-# Full files, curated, CC license, no OAuth needed
+# FIXED: now filters by title/tags before downloading
 # ══════════════════════════════════════════════════════════
 def fetch_pixabay_audio(query, num=10):
     if not PIXABAY_KEY:
@@ -272,28 +302,52 @@ def fetch_pixabay_audio(query, num=10):
     ]:
         try:
             r = requests.get(endpoint, params={
-                "key": PIXABAY_KEY, "q": query, "per_page": num,
+                "key": PIXABAY_KEY, "q": query, "per_page": num * 2,
             }, timeout=30)
             if r.status_code == 200:
                 hits = r.json().get("hits", [])
                 if hits:
-                    print(f"   -> {len(hits)} found")
+                    print(f"   -> {len(hits)} found (pre-filter)")
                     break
         except Exception:
             continue
+
     if not hits:
         raise RuntimeError(f"Pixabay: no sounds for '{query}'")
 
+    # FILTER: check title and tags for bad content before downloading
+    clean_hits = []
+    for hit in hits:
+        title = (hit.get("title") or hit.get("description") or "").lower()
+        tags  = hit.get("tags", "").lower()
+        combined = title + " " + tags
+        tag_set  = {t.strip() for t in combined.replace(",", " ").split()}
+        if tag_set & BAD_TAGS:
+            print(f"   Skipped (bad tags): {title[:40]}")
+            continue
+        if has_bad_content(title):
+            print(f"   Skipped (bad title): {title[:40]}")
+            continue
+        clean_hits.append(hit)
+
+    print(f"   -> {len(clean_hits)} after vocal filter")
+    if not clean_hits:
+        raise RuntimeError(f"Pixabay: all results filtered for '{query}'")
+
     os.makedirs("audio_tmp", exist_ok=True)
     files = []
-    random.shuffle(hits)
-    for hit in hits:
+    random.shuffle(clean_hits)
+    for hit in clean_hits[:num]:
         url = hit.get("audio") or hit.get("audioURL")
         if not url:
             for k, v in hit.items():
                 if isinstance(v, str) and v.endswith(".mp3"):
-                    url = v; break
+                    url = v
+                    break
         if not url:
+            continue
+        # Final filename guard
+        if has_bad_content(url):
             continue
         path = os.path.join("audio_tmp", f"pb_{hit['id']}.mp3")
         if not os.path.exists(path):
@@ -303,30 +357,25 @@ def fetch_pixabay_audio(query, num=10):
                 f.write(r2.content)
             time.sleep(0.3)
         files.append(path)
+
     if not files:
-        raise RuntimeError("Pixabay: download failed")
+        raise RuntimeError("Pixabay: download failed after filtering")
     return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
 # INTERNET ARCHIVE — picks LARGEST file (best quality)
+# FIXED: now filters item title AND filename for vocal content
 # ══════════════════════════════════════════════════════════
 def fetch_archive_audio(query, num=6):
     print(f"   [Internet Archive] '{query}'")
-    r = requests.get("https://archive.org/advancedsearch.php", params={
-        "q":      f"{query} AND mediatype:audio AND format:MP3",
-        "fl":     "identifier,title",
-        "rows":   num,
-        "output": "json",
-    }, timeout=30)
-    r.raise_for_status()
     docs = []
     for attempt_q in [query, " ".join(query.split()[:2])]:
         try:
             ra = requests.get("https://archive.org/advancedsearch.php", params={
                 "q":      f"{attempt_q} AND mediatype:audio AND format:MP3",
                 "fl":     "identifier,title",
-                "rows":   num,
+                "rows":   num * 2,  # fetch more to allow filtering
                 "output": "json",
             }, timeout=30)
             if ra.status_code == 200:
@@ -336,28 +385,51 @@ def fetch_archive_audio(query, num=6):
                     break
         except Exception:
             continue
+
     if not docs:
         print("   -> 0 items")
 
+    # FILTER: remove items with bad titles
+    clean_docs = []
+    for doc in docs:
+        title = doc.get("title", "").lower()
+        if has_bad_content(title):
+            print(f"   Skipped (bad title): {title[:40]}")
+            continue
+        title_words = set(title.replace(",", " ").split())
+        if title_words & BAD_TAGS:
+            print(f"   Skipped (bad tags in title): {title[:40]}")
+            continue
+        clean_docs.append(doc)
+
+    print(f"   -> {len(clean_docs)} after title filter")
+
     os.makedirs("audio_tmp", exist_ok=True)
     files = []
-    for doc in docs:
+    for doc in clean_docs[:num]:
         identifier = doc.get("identifier", "")
         if not identifier:
             continue
         try:
             meta = requests.get(f"https://archive.org/metadata/{identifier}", timeout=15)
-            mp3s = [f for f in meta.json().get("files", [])
-                    if f.get("name", "").endswith(".mp3")]
+            all_mp3s = [f for f in meta.json().get("files", [])
+                        if f.get("name", "").endswith(".mp3")]
+
+            # FILTER: remove files with bad names
+            mp3s = [f for f in all_mp3s if not has_bad_content(f.get("name", ""))]
+
             if not mp3s:
+                print(f"   -> No clean MP3s in {identifier}")
                 continue
-            # FIX: pick LARGEST file (best quality) not smallest
+
+            # Pick LARGEST file (best quality)
             mp3s.sort(key=lambda f: int(f.get("size", 0)), reverse=True)
             target = mp3s[0]
             url    = f"https://archive.org/download/{identifier}/{target['name']}"
             path   = os.path.join("audio_tmp", f"ia_{identifier[:20]}.mp3")
             if not os.path.exists(path):
-                print(f"   -> {target['name'][:40]} ({int(target.get('size',0))//1024//1024}MB)")
+                size_mb = int(target.get("size", 0)) // 1024 // 1024
+                print(f"   -> {target['name'][:40]} ({size_mb}MB)")
                 r2 = requests.get(url, timeout=180, stream=True)
                 r2.raise_for_status()
                 with open(path, "wb") as f:
@@ -368,12 +440,13 @@ def fetch_archive_audio(query, num=6):
             print(f"   IA error: {e}")
 
     if not files:
-        raise RuntimeError("Archive: no files downloaded")
+        raise RuntimeError("Archive: no files downloaded after filtering")
     return load_segments(files, channels=2)
 
 
 # ══════════════════════════════════════════════════════════
 # JAMENDO — jazz instrumental
+# NOTE: vocalinstrumental=instrumental filter already active — unchanged
 # ══════════════════════════════════════════════════════════
 def fetch_jamendo(tags, num=12):
     if not JAMENDO_KEY:
@@ -389,7 +462,7 @@ def fetch_jamendo(tags, num=12):
                 "tags":              attempt,
                 "audioformat":       "mp31",
                 "boost":             "popularity_month",
-                "vocalinstrumental": "instrumental",
+                "vocalinstrumental": "instrumental",  # key filter — keeps this
                 "offset":            random.randint(0, 50),
             }, timeout=30)
             r.raise_for_status()
@@ -403,6 +476,9 @@ def fetch_jamendo(tags, num=12):
             for t in results[:10]:
                 url = t.get("audio")
                 if not url:
+                    continue
+                # Extra name guard
+                if has_bad_content(t.get("name", "")):
                     continue
                 path = os.path.join("audio_tmp", f"jm_{t['id']}.mp3")
                 if not os.path.exists(path):
@@ -440,9 +516,12 @@ def fetch_ccmixter(query="jazz instrumental", num=10):
     os.makedirs("audio_tmp", exist_ok=True)
     files = []
     for t in results[:8]:
+        # Guard: skip if track name looks bad
+        if has_bad_content(t.get("upload_name", "")):
+            continue
         for fdata in t.get("files", []):
             url = fdata.get("download_url") or fdata.get("file_page_url")
-            if url and url.endswith(".mp3"):
+            if url and url.endswith(".mp3") and not has_bad_content(url):
                 tid  = str(t.get("upload_id", random.randint(1000, 9999)))
                 path = os.path.join("audio_tmp", f"cc_{tid}.mp3")
                 if not os.path.exists(path):
@@ -453,7 +532,8 @@ def fetch_ccmixter(query="jazz instrumental", num=10):
                             for chunk in r2.iter_content(32768):
                                 f.write(chunk)
                         if os.path.getsize(path) < 10000:
-                            os.remove(path); continue
+                            os.remove(path)
+                            continue
                     except Exception:
                         continue
                 files.append(path)
@@ -465,7 +545,7 @@ def fetch_ccmixter(query="jazz instrumental", num=10):
 
 
 # ══════════════════════════════════════════════════════════
-# NUMPY — focus noise (locally generated)
+# NUMPY — focus noise (locally generated — always clean)
 # ══════════════════════════════════════════════════════════
 def generate_brown_noise(duration_ms):
     import numpy as np
@@ -526,17 +606,6 @@ def build_noise(noise_type, duration_hours):
 # AUDIO PROCESSING
 # ══════════════════════════════════════════════════════════
 def rms_normalize(seg, target_dbrms=-20.0):
-    """
-    Normalize by RMS instead of peak — preserves natural dynamics.
-    Peak normalization flattens dynamics; RMS keeps them alive.
-    """
-    rms = seg.rms
-    if rms == 0:
-        return seg
-    current_dbrms = 20 * (rms / 32767.0).__abs__().__class__.__name__ and \
-                    10 * (rms**2 / (32767**2)).__class__.__name__ and \
-                    seg.dBFS
-    # Use pydub dBFS as approximation (close enough for our purposes)
     diff = target_dbrms - seg.dBFS
     if abs(diff) > 1:
         return seg + diff
@@ -544,10 +613,6 @@ def rms_normalize(seg, target_dbrms=-20.0):
 
 
 def apply_haas_stereo(seg, delay_ms=18):
-    """
-    Haas effect: delays right channel by ~18ms to create stereo width
-    from mono sources. Inaudible as separate echo but creates spatial depth.
-    """
     if seg.channels == 2:
         return seg
     try:
@@ -565,11 +630,6 @@ def apply_haas_stereo(seg, delay_ms=18):
 
 
 def apply_eq(seg, eq_type="natural"):
-    """
-    Gentle EQ to reduce listening fatigue.
-    high_cut: reduces harshness above 8kHz (rain, noise)
-    natural: minimal processing
-    """
     if eq_type != "high_cut":
         return seg
     try:
@@ -582,8 +642,7 @@ def apply_eq(seg, eq_type="natural"):
             samples = samples.reshape(-1, 2)
 
         def gentle_highshelf_cut(ch_samples):
-            # Simple IIR low-pass at ~9kHz — gentle rolloff
-            alpha  = 0.85  # ~9kHz cutoff at 44100Hz
+            alpha  = 0.85
             out    = np.zeros_like(ch_samples)
             out[0] = ch_samples[0]
             for i in range(1, len(ch_samples)):
@@ -607,15 +666,12 @@ def apply_eq(seg, eq_type="natural"):
 
 
 def load_segments(files, channels=2):
-    """Load audio files with RMS normalization and stereo conversion."""
     segments = []
     for f in files:
         try:
             seg = AudioSegment.from_mp3(f)
             seg = seg.set_frame_rate(SAMPLE_RATE)
-            # RMS normalize to preserve dynamics
             seg = rms_normalize(seg, target_dbrms=-20.0)
-            # Convert mono to stereo with Haas effect for depth
             if seg.channels == 1:
                 seg = apply_haas_stereo(seg)
             else:
@@ -632,7 +688,6 @@ def load_segments(files, channels=2):
 
 
 def loop_to_duration(segments, duration_hours):
-    """Loop segments with smooth crossfade until target duration."""
     target_ms = duration_hours * 3600 * 1000
     random.shuffle(segments)
     combined  = AudioSegment.empty()
@@ -650,12 +705,10 @@ def loop_to_duration(segments, duration_hours):
 
 
 def mix_layer(base, layer_segs, db_reduction, duration_hours):
-    """Overlay a layer at reduced volume with random start offset."""
     try:
         layer = loop_to_duration(layer_segs, duration_hours)
         layer = rms_normalize(layer) + db_reduction
 
-        # FIX: random offset — breaks synchronization patterns
         if len(layer) > 60000:
             offset = random.randint(0, len(layer) // 3)
             layer  = layer[offset:] + layer[:offset]
@@ -764,7 +817,6 @@ def main():
 
     # ── Jazz ───────────────────────────────────────────────
     elif category == "jazz":
-        # FIX: use recipe tags for variety instead of always theme_data tag
         jazz_tags = recipe.get("primary_jamendo_tags", ["jazz"])
         tags      = random.choice(jazz_tags)
         print(f"   Jazz tag: '{tags}'")
@@ -781,7 +833,7 @@ def main():
                                        layer["db_reduction"], duration)
             except Exception as e:
                 print(f"   Jazz layer skipped: {e}")
-        bitrate = "192k"  # higher bitrate for music
+        bitrate = "192k"
 
     # ── Ambient ────────────────────────────────────────────
     else:
