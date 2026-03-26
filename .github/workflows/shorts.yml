@@ -1,0 +1,109 @@
+name: Nocturne Noise — Shorts Pipeline
+
+on:
+  # Roda 6h depois do pipeline principal
+  # Ajuste o horário conforme o cron do pipeline principal
+  # Exemplo: se o main roda às 08:00 UTC, o short roda às 14:00 UTC
+  schedule:
+    - cron: '0 14 * * *'   # 14:00 UTC diário (ajuste conforme necessário)
+
+  # Permite rodar manualmente
+  workflow_dispatch:
+    inputs:
+      skip_upload:
+        description: 'Skip YouTube upload (test only)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  generate-short:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install yt-dlp
+
+      # ── Node.js (Remotion) ────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: remotion-short/package-lock.json
+
+      - name: Install Remotion dependencies
+        run: |
+          cd remotion-short
+          npm install
+
+      # ── System deps (Chrome + FFmpeg) ─────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg chromium-browser
+          # Instala Chrome para o Remotion
+          npx --yes @remotion/renderer@latest install chrome 2>/dev/null || true
+
+      # ── Secrets → env ─────────────────────────────────────
+      - name: Set environment variables
+        env:
+          GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          TOGETHER_API_KEY:    ${{ secrets.TOGETHER_API_KEY }}
+          FAL_API_KEY:         ${{ secrets.FAL_API_KEY }}
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:     ${{ secrets.PIXABAY_API_KEY }}
+          YT_TOKEN_B64:        ${{ secrets.YT_TOKEN_B64 }}
+        run: echo "Environment configured"
+
+      # ── Roda o pipeline de Shorts ─────────────────────────
+      - name: Generate and upload Short
+        env:
+          GROQ_API_KEY:        ${{ secrets.GROQ_API_KEY }}
+          TOGETHER_API_KEY:    ${{ secrets.TOGETHER_API_KEY }}
+          FAL_API_KEY:         ${{ secrets.FAL_API_KEY }}
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY:      ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY:     ${{ secrets.PIXABAY_API_KEY }}
+          YT_TOKEN_B64:        ${{ secrets.YT_TOKEN_B64 }}
+          CHROMIUM_PATH:       /usr/bin/chromium-browser
+        run: |
+          if [ "${{ inputs.skip_upload }}" = "true" ]; then
+            echo "⚠️  Upload desabilitado (modo teste)"
+            python step6_shorts.py --skip-upload || true
+          else
+            python step6_shorts.py
+          fi
+
+      # ── Report ────────────────────────────────────────────
+      - name: Report result
+        if: always()
+        run: |
+          if [ -f "last_short.json" ]; then
+            echo "✅ SHORT PUBLICADO"
+            cat last_short.json
+          else
+            echo "⚠️  last_short.json não encontrado"
+          fi
+
+      # ── Cleanup ───────────────────────────────────────────
+      - name: Cleanup artifacts
+        if: always()
+        run: |
+          rm -f yt_audio_raw.* short_audio.mp3 short_final.mp4 short_thumb.jpg
+          rm -f remotion-short/inputProps.json
