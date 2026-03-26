@@ -316,62 +316,56 @@ Keywords to weave in: {support_kw}
 Channel name: Nocturne Noise
 Channel URL: https://www.youtube.com/@NocturneNoise
 
-═══ TITLE RULES ═══
-Format: "[SEO Keyword Cluster] • [Cinematic Line]"
-Max 80 chars total.
+--- TITLE RULES ---
+Format: "[SEO Keyword Cluster] | [Cinematic Line]"
+Max 80 chars total. Use a pipe character | to separate the two parts.
 
-Available keyword clusters for this category (pick ONE — the most relevant):
+Available keyword clusters for this category (pick ONE - the most relevant):
   {kw_examples}
 
 Cinematic line rules:
-- Short, evocative, scene-setting — like a story in one line
+- Short, evocative, scene-setting - like a story in one line
 - Intimate, second person when possible
 - Specific moment, not a product category
 - For category "urban": ALWAYS include the city name
 
 Good full title examples:
-  "Rain Sounds for Sleep • You Forgot to Close the Window"
-  "Late Night Jazz • The Last Set of the Evening"
-  "Coffee Shop Ambience • A Quiet Corner, Just You"
-  "Brown Noise for Focus • Block Everything Out"
-  "Forest Sounds • Somewhere Far from Everything"
-  "Tokyo Night Ambience • 3AM and the City Is Still Breathing"
+  "Rain Sounds for Sleep | You Forgot to Close the Window"
+  "Late Night Jazz | The Last Set of the Evening"
+  "Coffee Shop Ambience | A Quiet Corner, Just You"
+  "Brown Noise for Focus | Block Everything Out"
+  "Forest Sounds | Somewhere Far from Everything"
+  "Tokyo Night Ambience | 3AM and the City Is Still Breathing"
 
 Bad title examples:
-  "A quiet corner of the jazz club long after everyone's gone" (no SEO keyword — invisible to search)
-  "RELAXING RAIN SOUNDS 3 HOURS" (no identity — forgettable)
-  "Heavy Rain Ambience for Sleep" (generic — no cinematic hook)
+  "A quiet corner of the jazz club long after everyone's gone" (no SEO keyword)
+  "RELAXING RAIN SOUNDS 3 HOURS" (no identity)
+  "Heavy Rain Ambience for Sleep" (no cinematic hook)
 
-═══ DESCRIPTION RULES ═══
+--- DESCRIPTION RULES ---
 Total: 500-700 chars.
 
+IMPORTANT: The description is a single JSON string. Use \\n for line breaks, never raw newlines.
+
 Structure (in this exact order):
-1. HOOK (2 lines, appear before "show more"): Second-person cinematic sentences placing the listener in the scene.
-   Be specific. Example: "You opened the window a few minutes ago. The rain started softly. Now it won't stop, and you don't want it to."
-2. USE-CASE LINE: "🎧 Perfect for: studying, working, falling asleep, unwinding after a long day."
-3. KEYWORD LINE: Natural sentence mentioning the duration and theme. Example: "{duration_hours} hours of uninterrupted {theme_data['theme']}."
-4. TIMESTAMPS:
-   0:00 Intro
-   0:30 {theme_data['theme'].title()}
-   [end time] Fade out
-5. SEPARATOR + CTA:
-   ━━━━━━━━━━━━━━━━━━━━━━
-   👍 If this helped you focus or sleep, leave a like — it helps more than you know.
-   🔔 New sounds twice a week → https://www.youtube.com/@NocturneNoise
-   ━━━━━━━━━━━━━━━━━━━━━━
+1. HOOK (2 sentences): Second-person cinematic sentences placing the listener in the scene. Example: "You opened the window a few minutes ago. The rain started softly. Now it won't stop, and you don't want it to."
+2. USE-CASE LINE: "Perfect for: studying, working, falling asleep, unwinding after a long day."
+3. KEYWORD LINE: Natural sentence with duration and theme. Example: "{duration_hours} hours of uninterrupted {theme_data['theme']}."
+4. TIMESTAMPS: "0:00 Intro\\n0:30 {theme_data['theme'].title()}\\n[end time] Fade out"
+5. CTA: "New sounds twice a week: https://www.youtube.com/@NocturneNoise"
 6. HASHTAGS: {hashtags}
 
-═══ TAGS RULES ═══
+--- TAGS RULES ---
 Generate exactly 25 tags as a JSON array of strings.
 - All lowercase, no hashtags, no special characters
-- Each tag is a standalone phrase — NO commas inside a tag
+- Each tag is a standalone phrase - NO commas inside a tag
 - MUST include at least 2 duration-based tags: "{duration_hours} hour {category}", "{duration_hours} hours of {theme_data['theme'].split()[0]}", etc.
 - MUST include use-case tags like: {use_case_ex}
 - MUST include "nocturne noise" as one tag
 - Mix: exact match, broad, long-tail
 
-═══ THUMBNAIL TEXT RULES ═══
-- Max 4 words, warm, readable, example: '{dur_label} • {theme_data['theme'].split()[0].title()}'
+--- THUMBNAIL TEXT RULES ---
+- Max 4 words, warm, readable, example: '{dur_label} {theme_data['theme'].split()[0].title()}'
 - Should match the SEO keyword cluster you chose for the title
 
 Return ONLY this JSON:
@@ -385,17 +379,66 @@ Return ONLY this JSON:
 
 
 def clean_json(raw: str) -> dict:
-    raw = raw.strip()
+    """
+    Robust JSON cleaner. Handles:
+    - Code fences
+    - Raw (unescaped) newlines/tabs inside JSON strings causing 'Invalid control character'
+    - BOM characters
+    """
+    raw = raw.strip().lstrip('\ufeff')
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
     raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
     raw = raw.strip()
+
+    # First attempt — try as-is
     try:
         return json.loads(raw)
-    except Exception:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
-        raise ValueError(f"Invalid JSON:\n{raw[:300]}")
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt — fix raw control characters inside JSON string values.
+    # AI models sometimes write real newlines inside strings instead of \n,
+    # which causes json.loads to raise "Invalid control character".
+    def escape_string_internals(text):
+        result  = []
+        in_str  = False
+        escaped = False
+        for ch in text:
+            if escaped:
+                result.append(ch)
+                escaped = False
+            elif ch == '\\' and in_str:
+                result.append(ch)
+                escaped = True
+            elif ch == '"':
+                in_str = not in_str
+                result.append(ch)
+            elif in_str and ch == '\n':
+                result.append('\\n')
+            elif in_str and ch == '\r':
+                result.append('\\r')
+            elif in_str and ch == '\t':
+                result.append('\\t')
+            elif in_str and ord(ch) < 32:
+                result.append(f'\\u{ord(ch):04x}')
+            else:
+                result.append(ch)
+        return ''.join(result)
+
+    try:
+        return json.loads(escape_string_internals(raw))
+    except json.JSONDecodeError:
+        pass
+
+    # Third attempt — extract JSON object with regex then clean
+    m = re.search(r'\{.*\}', raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(escape_string_internals(m.group()))
+        except Exception:
+            pass
+
+    raise ValueError(f"Invalid JSON after all cleanup attempts:\n{raw[:300]}")
 
 
 def call_groq(prompt):
@@ -435,17 +478,28 @@ def call_mistral(prompt):
 def call_gemini(prompt):
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key: raise ValueError("GEMINI_API_KEY not set")
-    import google.generativeai as genai
-    genai.configure(api_key=key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(f"{SYSTEM_PROMPT}\n\n{prompt}")
-    return response.text
+    try:
+        # New package: google-genai (replaces deprecated google-generativeai)
+        from google import genai
+        client   = genai.Client(api_key=key)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
+        )
+        return response.text
+    except ImportError:
+        # Fallback: old package still installed
+        import google.generativeai as genai_old
+        genai_old.configure(api_key=key)
+        model    = genai_old.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(f"{SYSTEM_PROMPT}\n\n{prompt}")
+        return response.text
 
 
 PROVIDERS = [
     ("Groq Llama 3.3 70B", call_groq),
     ("Mistral Small",       call_mistral),
-    ("Gemini 1.5 Flash",    call_gemini),
+    ("Gemini 2.0 Flash",    call_gemini),
 ]
 
 
