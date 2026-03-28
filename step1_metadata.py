@@ -6,6 +6,12 @@ All content in English for maximum CPM reach.
 SEO STRATEGY: Hybrid titles — keyword cluster FIRST for search discoverability,
 cinematic line SECOND for brand identity and CTR.
 Formula: "[SEO Keyword] • [Cinematic Line]"
+
+FIXES vs previous version:
+  - Title separator unified: prompt now correctly uses • (bullet) to match
+    FALLBACK_TITLES format — was using | (pipe) causing branding inconsistency
+  - mark_theme_used: reset now saves [] instead of [theme_name], preventing
+    the last used theme from being immediately re-picked after a full cycle
 """
 import json, os, random, argparse, re
 from datetime import datetime
@@ -81,9 +87,7 @@ THEMES = {
 }
 
 # ─────────────────────────────────────────────────────────
-# SEO KEYWORD CLUSTERS — high-volume search terms per category
-# These go at the START of every title for organic discoverability.
-# Source: YouTube/Google search volume data.
+# SEO KEYWORD CLUSTERS
 # ─────────────────────────────────────────────────────────
 KEYWORD_CLUSTERS = {
     "rain": [
@@ -137,9 +141,6 @@ KEYWORD_CLUSTERS = {
     ],
 }
 
-# ─────────────────────────────────────────────────────────
-# USE-CASE TAGS — added to every video for function-based search
-# ─────────────────────────────────────────────────────────
 USE_CASE_TAGS = {
     "rain":        ["rain sounds for sleep", "rain for studying", "rain to fall asleep",
                     "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours"],
@@ -183,6 +184,8 @@ def get_series_number(category):
 
 # ─────────────────────────────────────────────────────────
 # USED THEMES TRACKER
+# FIX: reset now saves [] instead of [theme_name] — prevents the last
+#      used theme from being immediately excluded on the next full cycle
 # ─────────────────────────────────────────────────────────
 USED_THEMES_FILE = "used_themes.json"
 
@@ -199,8 +202,11 @@ def mark_theme_used(theme_name):
     used = get_used_themes()
     all_themes = [t["theme"] for cat in THEMES.values() for t in cat]
     used.append(theme_name)
+    # FIX: was `used = [theme_name]` — kept the just-used theme as the only
+    # "used" entry, meaning it could be re-picked immediately after reset.
+    # Correct behavior: clear fully so all themes are available next cycle.
     if len(used) >= len(all_themes):
-        used = [theme_name]
+        used = []
     with open(USED_THEMES_FILE, "w") as f:
         json.dump(used, f)
 
@@ -305,6 +311,9 @@ def build_prompt(theme_data, category, duration_hours, series_num):
     use_cases   = USE_CASE_TAGS.get(category, [])
     use_case_ex = ", ".join(use_cases[:4])
 
+    # FIX: separator is now • (bullet) in the prompt, matching FALLBACK_TITLES.
+    # Previous version used | (pipe) here but • everywhere else — inconsistency
+    # caused the AI to use | while fallback titles used •, breaking visual branding.
     return f"""Generate YouTube metadata for the Nocturne Noise ambient channel.
 
 Theme: "{theme_data['theme']}"
@@ -317,8 +326,8 @@ Channel name: Nocturne Noise
 Channel URL: https://www.youtube.com/@NocturneNoise
 
 --- TITLE RULES ---
-Format: "[SEO Keyword Cluster] | [Cinematic Line]"
-Max 80 chars total. Use a pipe character | to separate the two parts.
+Format: "[SEO Keyword Cluster] • [Cinematic Line]"
+Max 80 chars total. Use a bullet character • to separate the two parts.
 
 Available keyword clusters for this category (pick ONE - the most relevant):
   {kw_examples}
@@ -330,17 +339,18 @@ Cinematic line rules:
 - For category "urban": ALWAYS include the city name
 
 Good full title examples:
-  "Rain Sounds for Sleep | You Forgot to Close the Window"
-  "Late Night Jazz | The Last Set of the Evening"
-  "Coffee Shop Ambience | A Quiet Corner, Just You"
-  "Brown Noise for Focus | Block Everything Out"
-  "Forest Sounds | Somewhere Far from Everything"
-  "Tokyo Night Ambience | 3AM and the City Is Still Breathing"
+  "Rain Sounds for Sleep • You Forgot to Close the Window"
+  "Late Night Jazz • The Last Set of the Evening"
+  "Coffee Shop Ambience • A Quiet Corner, Just You"
+  "Brown Noise for Focus • Block Everything Out"
+  "Forest Sounds • Somewhere Far from Everything"
+  "Tokyo Night Ambience • 3AM and the City Is Still Breathing"
 
 Bad title examples:
   "A quiet corner of the jazz club long after everyone's gone" (no SEO keyword)
   "RELAXING RAIN SOUNDS 3 HOURS" (no identity)
   "Heavy Rain Ambience for Sleep" (no cinematic hook)
+  "Rain Sounds | You Forgot to Close the Window" (wrong separator — must use •, not |)
 
 --- DESCRIPTION RULES ---
 Total: 500-700 chars.
@@ -390,15 +400,11 @@ def clean_json(raw: str) -> dict:
     raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
     raw = raw.strip()
 
-    # First attempt — try as-is
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Second attempt — fix raw control characters inside JSON string values.
-    # AI models sometimes write real newlines inside strings instead of \n,
-    # which causes json.loads to raise "Invalid control character".
     def escape_string_internals(text):
         result  = []
         in_str  = False
@@ -430,7 +436,6 @@ def clean_json(raw: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Third attempt — extract JSON object with regex then clean
     m = re.search(r'\{.*\}', raw, re.DOTALL)
     if m:
         try:
@@ -479,7 +484,6 @@ def call_gemini(prompt):
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key: raise ValueError("GEMINI_API_KEY not set")
     try:
-        # New package: google-genai (replaces deprecated google-generativeai)
         from google import genai
         client   = genai.Client(api_key=key)
         response = client.models.generate_content(
@@ -488,7 +492,6 @@ def call_gemini(prompt):
         )
         return response.text
     except ImportError:
-        # Fallback: old package still installed
         import google.generativeai as genai_old
         genai_old.configure(api_key=key)
         model    = genai_old.GenerativeModel("gemini-2.0-flash")
