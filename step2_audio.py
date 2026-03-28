@@ -2,21 +2,21 @@
 STEP 2 — Audio Generator (Nocturne Noise)
 ==========================================
 Audio sources by category:
-  ambient: Pixabay Audio → Freesound OAuth (full files) → Internet Archive
+  ambient: Freesound OAuth (primary) → Pixabay Audio (sounds only, no videos)
   jazz:    Jamendo → ccMixter → Freesound OAuth
   noise:   Generated locally with numpy (perfect quality)
 
 FIXES vs previous version:
-  - BAD_TAGS expanded with vocal/speech terms (was incomplete)
-  - has_bad_content() helper filters filenames on all sources
-  - Pixabay now filters by title/tags before downloading
-  - Internet Archive now filters item title AND filename
-  - SOUND_RECIPES layers cleaned — removed voice-prone queries
-  - Freesound OAuth: BAD_TAGS filter was already working, kept
-  - RMS normalization, Haas stereo, EQ — unchanged
-  - Jazz: Jamendo vocalinstrumental=instrumental filter — unchanged
+  - REMOVED Internet Archive — primary source of voice contamination
+  - REMOVED Pixabay /api/videos/ endpoint — video files frequently contain narration
+  - fetch_ambient cascade is now: Freesound OAuth → Pixabay (sounds only)
+  - has_bad_content() rewritten with regex word boundaries — fixes false positives
+    ("birdsong" no longer blocked by "song", "cocktail" by "talk", etc.)
+  - BAD_TAGS expanded: guided, meditation, affirmation, human, people, speaking, story, lecture
+  - BAD_TAGS expanded music genres and technical artifacts
+  - Freesound query filter tightened: excludes music-tagged content at API level
 """
-import os, json, glob, time, random, requests, base64
+import os, json, glob, time, random, re, requests, base64
 from pydub import AudioSegment
 from pydub.effects import normalize
 from io import BytesIO
@@ -39,8 +39,8 @@ MIN_SAMPLE_SEC  = 45
 SAMPLE_RATE     = 44100
 
 # ─────────────────────────────────────────────────────────
-# BAD_TAGS — used to filter out ANY audio with voice/speech/music
-# Applied to Freesound tags, Pixabay title/tags, Archive title/filename
+# BAD_TAGS — filters out ANY audio with voice/speech/music
+# Applied to: Freesound tags, Pixabay title/tags, filename guard
 # ─────────────────────────────────────────────────────────
 BAD_TAGS = {
     # Voice & speech
@@ -48,11 +48,15 @@ BAD_TAGS = {
     "narration", "voiceover", "vocal", "vocals", "singing", "singer",
     "song", "lyrics", "lyric", "words", "reading", "audiobook",
     "podcast", "interview", "commentary", "announcement", "broadcast",
-    "radio", "news", "monologue", "dialogue", "chant",
+    "radio", "news", "monologue", "dialogue", "chant", "speaking",
+    "human", "people", "man", "woman", "person",
+    # Guided content (always has voice)
+    "guided", "meditation guided", "affirmation", "sleep talk",
+    "story", "storytelling", "tale", "lecture", "lesson",
     # Music genres that typically have vocals
     "rap", "hiphop", "hip hop", "folk", "pop", "rock", "blues",
     "country", "rnb", "r&b", "soul", "reggae", "opera", "gospel",
-    "metal", "punk", "indie", "acoustic song",
+    "metal", "punk", "indie", "acoustic song", "music",
     # Technical artifacts
     "glitch", "error", "test", "beep", "alarm", "sample", "remix",
     # Disturbing/unwanted sounds
@@ -64,17 +68,29 @@ BAD_TAGS = {
 }
 
 # ─────────────────────────────────────────────────────────
-# FILENAME GUARD — last line of defense before loading a file
+# FILENAME / TITLE GUARD — last line of defense before loading
+# FIX: uses regex word boundaries to prevent false positives.
+#   OLD: "song" in "birdsong" → True (WRONG, birdsong is desired)
+#   NEW: r'\bsong\b' in "birdsong" → False (CORRECT)
 # ─────────────────────────────────────────────────────────
+_BAD_WORDS_PATTERN = re.compile(
+    r'\b(' + '|'.join([
+        r"vocal", r"voice", r"speech", r"spoken", r"song", r"lyric",
+        r"podcast", r"interview", r"narrator", r"narration", r"rap",
+        r"singing", r"singer", r"broadcast", r"radio", r"guided",
+        r"affirmation", r"story", r"lecture", r"speaking",
+        r"human", r"people", r"talking", r"chant", r"talk",
+    ]) + r')\b',
+    re.IGNORECASE,
+)
+
 def has_bad_content(name: str) -> bool:
-    """Returns True if filename or title contains vocal/speech indicators."""
-    n = name.lower()
-    bad_words = [
-        "vocal", "voice", "speech", "spoken", "song", "lyric",
-        "podcast", "interview", "narrator", "rap", "singing",
-        "singer", "words", "talk", "broadcast", "radio",
-    ]
-    return any(w in n for w in bad_words)
+    """
+    Returns True if a filename or title contains vocal/speech indicators.
+    Uses regex word boundaries — 'birdsong' is NOT blocked by 'song',
+    'cocktail' is NOT blocked by 'talk', 'passwords' NOT blocked by 'words'.
+    """
+    return bool(_BAD_WORDS_PATTERN.search(name))
 
 
 SOUND_RECIPES = {
@@ -115,7 +131,6 @@ SOUND_RECIPES = {
         ],
         "layers": [
             {"queries": ["fireplace crackling wood fire", "fire crackling gentle"], "db_reduction": -11},
-            # FIXED: removed "vinyl crackle" — often contains background music with vocals
             {"queries": ["indoor room tone quiet", "quiet room ambience interior"], "db_reduction": -18},
         ],
         "eq": "natural",
@@ -141,7 +156,6 @@ SOUND_RECIPES = {
             "night city ambient",
         ],
         "layers": [
-            # FIXED: removed "bar music muffled" and "cafe music distant" — too likely to include vocals
             {"queries": ["rain city pavement", "rain urban street ambient"], "db_reduction": -8},
             {"queries": ["distant traffic hum night", "city ambient hum quiet"], "db_reduction": -20},
         ],
@@ -153,7 +167,6 @@ SOUND_RECIPES = {
             "smooth jazz", "acoustic jazz", "jazz quartet",
         ],
         "layers": [
-            # FIXED: kept only clearly non-vocal ambient layers
             {"queries": ["bar cafe ambience background quiet", "indoor cafe ambient soft"], "db_reduction": -14},
             {"queries": ["rain window soft", "gentle rain indoor"], "db_reduction": -18},
         ],
@@ -170,7 +183,7 @@ SOUND_RECIPES = {
 
 
 # ══════════════════════════════════════════════════════════
-# FREESOUND OAUTH — full file downloads
+# FREESOUND OAUTH — primary ambient source (most controllable)
 # ══════════════════════════════════════════════════════════
 def get_freesound_token():
     if not FREESOUND_TOKEN:
@@ -203,10 +216,15 @@ def freesound_oauth_search(query, num=12):
     page  = random.randint(1, 4)
     print(f"   [Freesound OAuth] '{query}' (page {page})")
 
+    # FIX: added NOT tag:music NOT tag:vocal NOT tag:voice to filter at API level
     r = requests.get("https://freesound.org/apiv2/search/text/", params={
         "query":     query,
         "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
-        "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 7200] license:(\"Creative Commons 0\" OR \"Attribution\")",
+        "filter":    (
+            f"duration:[{MIN_SAMPLE_SEC} TO 7200] "
+            f"license:(\"Creative Commons 0\" OR \"Attribution\") "
+            f"NOT tag:music NOT tag:vocal NOT tag:voice NOT tag:speech NOT tag:singing"
+        ),
         "sort":      "rating_desc",
         "page_size": 15,
         "page":      page,
@@ -214,7 +232,7 @@ def freesound_oauth_search(query, num=12):
     r.raise_for_status()
     results = r.json().get("results", [])
 
-    # Apply BAD_TAGS filter + filename guard
+    # Apply BAD_TAGS filter + filename guard on top of API filter
     clean = [s for s in results
              if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
              and not has_bad_content(s.get("name", ""))
@@ -234,7 +252,11 @@ def freesound_oauth_search(query, num=12):
             r2 = requests.get("https://freesound.org/apiv2/search/text/", params={
                 "query":     short_q,
                 "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
-                "filter":    f"duration:[{MIN_SAMPLE_SEC} TO 7200] license:(\"Creative Commons 0\" OR \"Attribution\")",
+                "filter":    (
+                    f"duration:[{MIN_SAMPLE_SEC} TO 7200] "
+                    f"license:(\"Creative Commons 0\" OR \"Attribution\") "
+                    f"NOT tag:music NOT tag:vocal NOT tag:voice NOT tag:speech NOT tag:singing"
+                ),
                 "sort":      "rating_desc",
                 "page_size": 15,
                 "page":      1,
@@ -288,34 +310,31 @@ def fetch_freesound_oauth(query, num=10):
 
 
 # ══════════════════════════════════════════════════════════
-# PIXABAY AUDIO — primary ambient source
-# FIXED: now filters by title/tags before downloading
+# PIXABAY AUDIO — secondary ambient source
+# FIX: removed /api/videos/ endpoint (video files contain narration/music)
+# FIX: uses only /api/sounds/ endpoint which is safer for ambient content
 # ══════════════════════════════════════════════════════════
 def fetch_pixabay_audio(query, num=10):
     if not PIXABAY_KEY:
         raise ValueError("PIXABAY_API_KEY not set")
     print(f"   [Pixabay Audio] '{query}'")
+
+    # FIX: only sounds endpoint — removed /api/videos/ which had vocal contamination
     hits = []
-    for endpoint in [
-        "https://pixabay.com/api/sounds/",
-        "https://pixabay.com/api/videos/",
-    ]:
-        try:
-            r = requests.get(endpoint, params={
-                "key": PIXABAY_KEY, "q": query, "per_page": num * 2,
-            }, timeout=30)
-            if r.status_code == 200:
-                hits = r.json().get("hits", [])
-                if hits:
-                    print(f"   -> {len(hits)} found (pre-filter)")
-                    break
-        except Exception:
-            continue
+    try:
+        r = requests.get("https://pixabay.com/api/sounds/", params={
+            "key": PIXABAY_KEY, "q": query, "per_page": num * 2,
+        }, timeout=30)
+        if r.status_code == 200:
+            hits = r.json().get("hits", [])
+            print(f"   -> {len(hits)} found (pre-filter)")
+    except Exception as e:
+        raise RuntimeError(f"Pixabay sounds endpoint failed: {e}")
 
     if not hits:
         raise RuntimeError(f"Pixabay: no sounds for '{query}'")
 
-    # FILTER: check title and tags for bad content before downloading
+    # Filter: check title and tags for bad content before downloading
     clean_hits = []
     for hit in hits:
         title = (hit.get("title") or hit.get("description") or "").lower()
@@ -346,7 +365,6 @@ def fetch_pixabay_audio(query, num=10):
                     break
         if not url:
             continue
-        # Final filename guard
         if has_bad_content(url):
             continue
         path = os.path.join("audio_tmp", f"pb_{hit['id']}.mp3")
@@ -364,89 +382,8 @@ def fetch_pixabay_audio(query, num=10):
 
 
 # ══════════════════════════════════════════════════════════
-# INTERNET ARCHIVE — picks LARGEST file (best quality)
-# FIXED: now filters item title AND filename for vocal content
-# ══════════════════════════════════════════════════════════
-def fetch_archive_audio(query, num=6):
-    print(f"   [Internet Archive] '{query}'")
-    docs = []
-    for attempt_q in [query, " ".join(query.split()[:2])]:
-        try:
-            ra = requests.get("https://archive.org/advancedsearch.php", params={
-                "q":      f"{attempt_q} AND mediatype:audio AND format:MP3",
-                "fl":     "identifier,title",
-                "rows":   num * 2,  # fetch more to allow filtering
-                "output": "json",
-            }, timeout=30)
-            if ra.status_code == 200:
-                docs = ra.json().get("response", {}).get("docs", [])
-                if docs:
-                    print(f"   -> {len(docs)} items ('{attempt_q}')")
-                    break
-        except Exception:
-            continue
-
-    if not docs:
-        print("   -> 0 items")
-
-    # FILTER: remove items with bad titles
-    clean_docs = []
-    for doc in docs:
-        title = doc.get("title", "").lower()
-        if has_bad_content(title):
-            print(f"   Skipped (bad title): {title[:40]}")
-            continue
-        title_words = set(title.replace(",", " ").split())
-        if title_words & BAD_TAGS:
-            print(f"   Skipped (bad tags in title): {title[:40]}")
-            continue
-        clean_docs.append(doc)
-
-    print(f"   -> {len(clean_docs)} after title filter")
-
-    os.makedirs("audio_tmp", exist_ok=True)
-    files = []
-    for doc in clean_docs[:num]:
-        identifier = doc.get("identifier", "")
-        if not identifier:
-            continue
-        try:
-            meta = requests.get(f"https://archive.org/metadata/{identifier}", timeout=15)
-            all_mp3s = [f for f in meta.json().get("files", [])
-                        if f.get("name", "").endswith(".mp3")]
-
-            # FILTER: remove files with bad names
-            mp3s = [f for f in all_mp3s if not has_bad_content(f.get("name", ""))]
-
-            if not mp3s:
-                print(f"   -> No clean MP3s in {identifier}")
-                continue
-
-            # Pick LARGEST file (best quality)
-            mp3s.sort(key=lambda f: int(f.get("size", 0)), reverse=True)
-            target = mp3s[0]
-            url    = f"https://archive.org/download/{identifier}/{target['name']}"
-            path   = os.path.join("audio_tmp", f"ia_{identifier[:20]}.mp3")
-            if not os.path.exists(path):
-                size_mb = int(target.get("size", 0)) // 1024 // 1024
-                print(f"   -> {target['name'][:40]} ({size_mb}MB)")
-                r2 = requests.get(url, timeout=180, stream=True)
-                r2.raise_for_status()
-                with open(path, "wb") as f:
-                    for chunk in r2.iter_content(32768):
-                        f.write(chunk)
-            files.append(path)
-        except Exception as e:
-            print(f"   IA error: {e}")
-
-    if not files:
-        raise RuntimeError("Archive: no files downloaded after filtering")
-    return load_segments(files, channels=2)
-
-
-# ══════════════════════════════════════════════════════════
-# JAMENDO — jazz instrumental
-# NOTE: vocalinstrumental=instrumental filter already active — unchanged
+# JAMENDO — jazz instrumental (primary jazz source)
+# vocalinstrumental=instrumental filter active — unchanged
 # ══════════════════════════════════════════════════════════
 def fetch_jamendo(tags, num=12):
     if not JAMENDO_KEY:
@@ -462,7 +399,7 @@ def fetch_jamendo(tags, num=12):
                 "tags":              attempt,
                 "audioformat":       "mp31",
                 "boost":             "popularity_month",
-                "vocalinstrumental": "instrumental",  # key filter — keeps this
+                "vocalinstrumental": "instrumental",
                 "offset":            random.randint(0, 50),
             }, timeout=30)
             r.raise_for_status()
@@ -477,7 +414,6 @@ def fetch_jamendo(tags, num=12):
                 url = t.get("audio")
                 if not url:
                     continue
-                # Extra name guard
                 if has_bad_content(t.get("name", "")):
                     continue
                 path = os.path.join("audio_tmp", f"jm_{t['id']}.mp3")
@@ -516,7 +452,6 @@ def fetch_ccmixter(query="jazz instrumental", num=10):
     os.makedirs("audio_tmp", exist_ok=True)
     files = []
     for t in results[:8]:
-        # Guard: skip if track name looks bad
         if has_bad_content(t.get("upload_name", "")):
             continue
         for fdata in t.get("files", []):
@@ -747,13 +682,15 @@ def cleanup_tmp():
 
 # ══════════════════════════════════════════════════════════
 # SOURCE CASCADES
+# FIX: Freesound OAuth is now PRIMARY (most controllable filters)
+#      Pixabay (sounds only) is SECONDARY fallback
+#      Internet Archive REMOVED — too much voice contamination
 # ══════════════════════════════════════════════════════════
 def fetch_ambient(query):
-    """Pixabay → Freesound OAuth → Internet Archive"""
+    """Freesound OAuth (primary) → Pixabay sounds (fallback)"""
     for name, fn, args in [
-        ("Pixabay Audio",    fetch_pixabay_audio,   (query,)),
-        ("Freesound OAuth",  fetch_freesound_oauth, (query,)),
-        ("Internet Archive", fetch_archive_audio,   (query,)),
+        ("Freesound OAuth", fetch_freesound_oauth, (query,)),
+        ("Pixabay Audio",   fetch_pixabay_audio,   (query,)),
     ]:
         try:
             print(f"\n   Trying {name}...")
@@ -766,9 +703,9 @@ def fetch_ambient(query):
 def fetch_jazz(tags):
     """Jamendo → ccMixter → Freesound OAuth"""
     for name, fn, args in [
-        ("Jamendo",          fetch_jamendo,         (tags,)),
-        ("ccMixter",         fetch_ccmixter,        ("jazz instrumental",)),
-        ("Freesound OAuth",  fetch_freesound_oauth, ("jazz piano soft instrumental",)),
+        ("Jamendo",         fetch_jamendo,         (tags,)),
+        ("ccMixter",        fetch_ccmixter,        ("jazz instrumental",)),
+        ("Freesound OAuth", fetch_freesound_oauth, ("jazz piano soft instrumental",)),
     ]:
         try:
             print(f"\n   Trying {name}...")
