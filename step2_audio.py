@@ -13,8 +13,8 @@ FIXES vs previous version:
   - has_bad_content() rewritten with regex word boundaries — fixes false positives
     ("birdsong" no longer blocked by "song", "cocktail" by "talk", etc.)
   - BAD_TAGS expanded: guided, meditation, affirmation, human, people, speaking, story, lecture
-  - BAD_TAGS expanded music genres and technical artifacts
-  - Freesound query filter tightened: excludes music-tagged content at API level
+  - Freesound filter uses correct Solr/Lucene syntax: -tag:x instead of NOT tag:x
+    (NOT operator caused 400 Bad Request errors)
 """
 import os, json, glob, time, random, re, requests, base64
 from pydub import AudioSegment
@@ -68,10 +68,8 @@ BAD_TAGS = {
 }
 
 # ─────────────────────────────────────────────────────────
-# FILENAME / TITLE GUARD — last line of defense before loading
-# FIX: uses regex word boundaries to prevent false positives.
-#   OLD: "song" in "birdsong" → True (WRONG, birdsong is desired)
-#   NEW: r'\bsong\b' in "birdsong" → False (CORRECT)
+# FILENAME / TITLE GUARD — uses regex word boundaries
+# Prevents false positives: "birdsong" != "song", "cocktail" != "talk"
 # ─────────────────────────────────────────────────────────
 _BAD_WORDS_PATTERN = re.compile(
     r'\b(' + '|'.join([
@@ -183,7 +181,7 @@ SOUND_RECIPES = {
 
 
 # ══════════════════════════════════════════════════════════
-# FREESOUND OAUTH — primary ambient source (most controllable)
+# FREESOUND OAUTH — primary ambient source
 # ══════════════════════════════════════════════════════════
 def get_freesound_token():
     if not FREESOUND_TOKEN:
@@ -216,15 +214,19 @@ def freesound_oauth_search(query, num=12):
     page  = random.randint(1, 4)
     print(f"   [Freesound OAuth] '{query}' (page {page})")
 
-    # FIX: added NOT tag:music NOT tag:vocal NOT tag:voice to filter at API level
+    # Freesound uses Solr/Lucene syntax.
+    # Exclusion operator is -tag:x — NOT tag:x causes 400 Bad Request.
+    # Defined once and reused for both the main search and the short-query retry.
+    solr_filter = (
+        f"duration:[{MIN_SAMPLE_SEC} TO 7200] "
+        f"license:(\"Creative Commons 0\" OR \"Attribution\") "
+        f"-tag:music -tag:vocal -tag:voice -tag:speech -tag:singing"
+    )
+
     r = requests.get("https://freesound.org/apiv2/search/text/", params={
         "query":     query,
         "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
-        "filter":    (
-            f"duration:[{MIN_SAMPLE_SEC} TO 7200] "
-            f"license:(\"Creative Commons 0\" OR \"Attribution\") "
-            f"NOT tag:music NOT tag:vocal NOT tag:voice NOT tag:speech NOT tag:singing"
-        ),
+        "filter":    solr_filter,
         "sort":      "rating_desc",
         "page_size": 15,
         "page":      page,
@@ -232,7 +234,7 @@ def freesound_oauth_search(query, num=12):
     r.raise_for_status()
     results = r.json().get("results", [])
 
-    # Apply BAD_TAGS filter + filename guard on top of API filter
+    # Secondary filter: BAD_TAGS set + filename guard on top of API filter
     clean = [s for s in results
              if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
              and not has_bad_content(s.get("name", ""))
@@ -252,11 +254,7 @@ def freesound_oauth_search(query, num=12):
             r2 = requests.get("https://freesound.org/apiv2/search/text/", params={
                 "query":     short_q,
                 "fields":    "id,name,download,duration,license,tags,avg_rating,num_ratings,num_downloads",
-                "filter":    (
-                    f"duration:[{MIN_SAMPLE_SEC} TO 7200] "
-                    f"license:(\"Creative Commons 0\" OR \"Attribution\") "
-                    f"NOT tag:music NOT tag:vocal NOT tag:voice NOT tag:speech NOT tag:singing"
-                ),
+                "filter":    solr_filter,
                 "sort":      "rating_desc",
                 "page_size": 15,
                 "page":      1,
@@ -310,16 +308,14 @@ def fetch_freesound_oauth(query, num=10):
 
 
 # ══════════════════════════════════════════════════════════
-# PIXABAY AUDIO — secondary ambient source
-# FIX: removed /api/videos/ endpoint (video files contain narration/music)
-# FIX: uses only /api/sounds/ endpoint which is safer for ambient content
+# PIXABAY AUDIO — fallback ambient source
+# Only /api/sounds/ — /api/videos/ removed (vocal contamination)
 # ══════════════════════════════════════════════════════════
 def fetch_pixabay_audio(query, num=10):
     if not PIXABAY_KEY:
         raise ValueError("PIXABAY_API_KEY not set")
     print(f"   [Pixabay Audio] '{query}'")
 
-    # FIX: only sounds endpoint — removed /api/videos/ which had vocal contamination
     hits = []
     try:
         r = requests.get("https://pixabay.com/api/sounds/", params={
@@ -334,7 +330,6 @@ def fetch_pixabay_audio(query, num=10):
     if not hits:
         raise RuntimeError(f"Pixabay: no sounds for '{query}'")
 
-    # Filter: check title and tags for bad content before downloading
     clean_hits = []
     for hit in hits:
         title = (hit.get("title") or hit.get("description") or "").lower()
@@ -383,7 +378,6 @@ def fetch_pixabay_audio(query, num=10):
 
 # ══════════════════════════════════════════════════════════
 # JAMENDO — jazz instrumental (primary jazz source)
-# vocalinstrumental=instrumental filter active — unchanged
 # ══════════════════════════════════════════════════════════
 def fetch_jamendo(tags, num=12):
     if not JAMENDO_KEY:
@@ -682,9 +676,8 @@ def cleanup_tmp():
 
 # ══════════════════════════════════════════════════════════
 # SOURCE CASCADES
-# FIX: Freesound OAuth is now PRIMARY (most controllable filters)
-#      Pixabay (sounds only) is SECONDARY fallback
-#      Internet Archive REMOVED — too much voice contamination
+# Freesound OAuth (primary) → Pixabay sounds (fallback)
+# Internet Archive removed
 # ══════════════════════════════════════════════════════════
 def fetch_ambient(query):
     """Freesound OAuth (primary) → Pixabay sounds (fallback)"""
