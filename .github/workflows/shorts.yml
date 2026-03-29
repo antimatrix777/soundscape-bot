@@ -2,7 +2,7 @@ name: Nocturne Noise — Shorts Pipeline
 
 on:
   schedule:
-    - cron: '0 14 * * *'   # 14:00 UTC diário (6h depois do vídeo longo de 21:00)
+    - cron: '0 23 * * *'   # 23:00 UTC diário (19:00 EST / 20:00 BRT) — Pico nos EUA
   workflow_dispatch:
     inputs:
       skip_upload:
@@ -16,10 +16,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    permissions:
+      actions: read
+      contents: read
+
     steps:
       # ── Checkout ──────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ── Runtime Setup (Node.js is required by yt-dlp ES6 extractor) ──
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── Download Artifacts from Weekly ────────────────────
+      - name: Download short_audio Pool from Weekly Pipeline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Procura a última execução de sucesso da pipeline semanal
+          RUN_ID=$(gh run list --workflow "🌙 Nocturne Noise — Weekly Upload" --status success --limit 1 --json databaseId --jq '.[0].databaseId' || echo "")
+          
+          if [ -n "$RUN_ID" ]; then
+             echo "Downloading artifact pool from Run $RUN_ID..."
+             gh run download "$RUN_ID" --pattern "nocturne-artifacts-*" --dir . || echo "Artifact pool not found"
+             
+             # 2. Seleciona o áudio do dia (1-7)
+             DAY_OF_WEEK=$(date +%u)
+             FILE_TARGET="short_audio_${DAY_OF_WEEK}.mp3"
+             
+             echo "Target audio for today (Day $DAY_OF_WEEK): $FILE_TARGET"
+             
+             # Procura o arquivo na pool e move para a raiz como 'short_audio.mp3'
+             find . -name "$FILE_TARGET" -exec cp {} ./short_audio.mp3 \; || true
+             
+             # Fallback: se o áudio do dia não existir, pega qualquer um
+             if [ ! -f "short_audio.mp3" ]; then
+                find . -name "short_audio_*.mp3" | head -n 1 | xargs -I{} cp {} ./short_audio.mp3 || true
+             fi
+          else
+             echo "No successful weekly run found yet."
+          fi
 
       # ── Python ────────────────────────────────────────────
       - name: Set up Python
