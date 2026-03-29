@@ -44,7 +44,7 @@ def freesound_search(query, num=10):
         params={
             "query": query,
             "filter": f"duration:[{MIN_SAMPLE_SEC} TO 7200]",
-            "fields": "id,name,duration,tags",
+            "fields": "id,name,duration,tags,previews",
             "page_size": num,
             "token": FREESOUND_KEY
         },
@@ -90,7 +90,9 @@ def freesound_download(sound):
     if os.path.exists(path):
         return path
 
-    url = f"https://freesound.org/apiv2/sounds/{sound['id']}/download/?token={FREESOUND_KEY}"
+    url = sound.get("previews", {}).get("preview-hq-mp3")
+    if not url:
+        raise RuntimeError(f"Som {sound['id']} não possui preview HQ")
 
     r = requests.get(url, stream=True, timeout=120)
     r.raise_for_status()
