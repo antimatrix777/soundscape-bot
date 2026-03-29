@@ -44,6 +44,7 @@ def run(script, extra_args=None):
 
 def cleanup():
     print("\nLimpando arquivos temporarios...")
+    # NOTE: short_audio_*.mp3 clips are EXCLUDED from cleanup to be used as artifacts for Shorts pool.
     for pat in ["output_audio.mp3", "background.jpg", "thumbnail.jpg",
                 "video_*.mp4", "audio_tmp/*.mp3", "metadata_*.json"]:
         for f in glob.glob(pat):
