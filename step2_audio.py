@@ -225,6 +225,22 @@ def main():
 
     audio.export("output_audio.mp3", format="mp3", bitrate="128k")
 
+    # [NOCTURNE NOISE] Save 7 unique 55s segments for Daily Shorts pool
+    try:
+        # Pega 7 segmentos diferentes para ter variedade durante a semana
+        if len(audio) > 120000:
+            for day in range(1, 8):
+                # Tenta pegar clips com 5 min de intervalo entre eles (variety)
+                start_ms = 60000 + (day - 1) * 300000
+                if start_ms + 60000 < len(audio):
+                    short_seg = audio[start_ms : start_ms + 55000]
+                    short_seg = short_seg.fade_in(1500).fade_out(1500)
+                    fname = f"short_audio_{day}.mp3"
+                    short_seg.export(fname, format="mp3", bitrate="192k")
+                    print(f"   Daily Segment {day} saved: {fname}")
+    except Exception as e:
+        print(f"   Note: failed to save segments pool (non-critical): {e}")
+
     print("DONE")
 
 
