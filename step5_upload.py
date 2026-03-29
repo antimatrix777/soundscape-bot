@@ -139,7 +139,7 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             "description": metadata["description"],
             "tags": metadata.get("tags", []),
             "categoryId": metadata.get("youtube_category_id", "10"),
-            "defaultLanguage": "pt",
+            "defaultLanguage": "en",
         },
         "status": {
             "privacyStatus": "public",
@@ -190,6 +190,38 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             media_body=MediaFileUpload(thumbnail_file, mimetype="image/jpeg")
         ).execute()
         print(f"   ✅ Thumbnail enviada!")
+
+    # Adiciona à playlist da categoria
+    category    = metadata.get("category", "")
+    env_key_map = {
+        "rain":        "PLAYLIST_RAIN",
+        "nature":      "PLAYLIST_NATURE",
+        "cozy":        "PLAYLIST_COZY",
+        "jazz":        "PLAYLIST_JAZZ",
+        "focus_noise": "PLAYLIST_FOCUS",
+        "study":       "PLAYLIST_STUDY",
+        "urban":       "PLAYLIST_URBAN",
+    }
+    playlist_id = os.environ.get(env_key_map.get(category, ""), "")
+    if playlist_id:
+        try:
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {
+                            "kind": "youtube#video",
+                            "videoId": video_id,
+                        },
+                    }
+                },
+            ).execute()
+            print(f"   ✅ Adicionado à playlist '{category}' ({playlist_id})")
+        except Exception as e:
+            print(f"   ⚠️  Falha ao adicionar à playlist: {e}")
+    else:
+        print(f"   ℹ️  Nenhuma playlist configurada para categoria '{category}'")
 
     # Salva ID do vídeo publicado
     with open("last_upload.json", "w") as f:
