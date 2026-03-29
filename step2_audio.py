@@ -1,4 +1,4 @@
-# STEP 2 — Audio Generator (Nocturne Noise) [FIXED FREESOUND API]
+# STEP 2 — Audio Generator (Nocturne Noise)
 
 import os, json, glob, time, random, re, requests
 from pydub import AudioSegment
@@ -9,7 +9,8 @@ load_dotenv()
 FREESOUND_KEY = os.environ.get("FREESOUND_API_KEY", "")
 JAMENDO_KEY   = os.environ.get("JAMENDO_CLIENT_ID", "")
 
-TARGET_LUFS = -18
+TARGET_DBFS  = -18.0   # Nível alvo por segmento (aproxima -18 LUFS para conteúdo ambient)
+CROSSFADE_MS = 4000    # Crossfade de 4s entre clipes — imperceptível, mas elimina o clique
 MIN_SAMPLE_SEC = 45
 SAMPLE_RATE = 44100
 
@@ -149,15 +150,31 @@ def fetch_jamendo():
 # AUDIO CORE
 # ══════════════════════════════════════════════════════════
 
+def normalize_segment(seg):
+    """
+    Normaliza o segmento para TARGET_DBFS usando RMS.
+    Aproxima corretamente -18 LUFS para conteúdo ambient contínuo.
+    Evita que clipes de fontes diferentes tenham volumes completamente diferentes.
+    """
+    if seg.dBFS == float('-inf'):
+        return seg  # silêncio total — não aplica gain
+    gain_needed = TARGET_DBFS - seg.dBFS
+    # Limita a 12 dB de ganho máximo para não amplificar ruído de fundo excessivamente
+    gain_needed = min(gain_needed, 12.0)
+    return seg.apply_gain(gain_needed)
+
+
 def load_segments(files):
     segs = []
     for f in files:
         try:
             seg = AudioSegment.from_mp3(f)
             if len(seg) > MIN_SAMPLE_SEC * 1000:
+                seg = normalize_segment(seg)
                 segs.append(seg)
-        except:
-            pass
+                print(f"   Carregado: {f} ({len(seg)//1000}s | {seg.dBFS:.1f} dBFS)")
+        except Exception as e:
+            print(f"   Ignorado: {f} ({e})")
 
     if not segs:
         raise RuntimeError("No valid audio")
@@ -166,13 +183,20 @@ def load_segments(files):
 
 
 def loop_audio(segs, hours):
-    target = hours * 3600 * 1000
-    out = AudioSegment.empty()
+    """
+    Monta o loop com crossfade entre cada clipe.
+    CROSSFADE_MS de sobreposição elimina o 'clique' audível na transição.
+    O crossfade não encurta o áudio perceptivelmente — apenas suaviza a costura.
+    """
+    target    = hours * 3600 * 1000
+    fade_ms   = min(CROSSFADE_MS, len(segs[0]) // 2)  # nunca maior que metade do clipe
+    out       = segs[0]
+    i         = 1
 
-    i = 0
     while len(out) < target:
-        out += segs[i % len(segs)]
-        i += 1
+        next_seg = segs[i % len(segs)]
+        out      = out.append(next_seg, crossfade=fade_ms)
+        i       += 1
 
     return out[:target]
 
