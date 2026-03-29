@@ -79,11 +79,13 @@ jobs:
           FREESOUND_CLIENT_SECRET:  ${{ secrets.FREESOUND_CLIENT_SECRET }}
         run: python run_pipeline.py
 
-      - name: Save logs
+      - name: Save logs and Shorts artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: log-${{ github.run_number }}
-          path: last_upload.json
+          name: nocturne-artifacts-${{ github.run_number }}
+          path: |
+            last_upload.json
+            short_audio_*.mp3
           if-no-files-found: ignore
           retention-days: 90
