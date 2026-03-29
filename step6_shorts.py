@@ -9,11 +9,12 @@ Fluxo:
   3. pydub       → corta melhor trecho de 55s + fade seamless
   4. Groq        → gera título evocativo derivado do título original
   5. AI cascade  → gera thumbnail 9:16 identidade do canal
-  6. inputProps  → salva JSON para o Remotion
-  7. Node.js     → Remotion renderiza o Short (1080x1920, 59s)
-  8. YouTube API → sobe como Short com link pro vídeo original
+  6. inputProps  → salva JSON para o Remotion (audioPath = "audio.mp3")
+  7. public/     → copia áudio para remotion-short/public/ (staticFile)
+  8. Node.js     → Remotion renderiza o Short (1080x1920, 59s)
+  9. YouTube API → sobe como Short com link pro vídeo original
 """
-import os, json, subprocess, sys, time, random, re, base64, requests
+import os, json, subprocess, sys, time, random, re, base64, requests, shutil
 from pathlib import Path
 from datetime import datetime
 from pydub import AudioSegment
@@ -29,13 +30,13 @@ TOGETHER_KEY   = os.environ.get("TOGETHER_API_KEY", "")
 FAL_KEY        = os.environ.get("FAL_API_KEY", "")
 GEMINI_KEY     = os.environ.get("GEMINI_API_KEY", "")
 PEXELS_KEY     = os.environ.get("PEXELS_API_KEY", "")
-PIXABAY_KEY    = os.environ.get("PIXABAY_API_KEY", "")
 
 SHORT_DURATION_S  = 55        # segundos do corte (deixa 4s de margem pro loop)
 FADE_MS           = 1500      # fade in/out em ms para seamless loop
 SHORT_FPS         = 30
 REMOTION_DIR      = Path(__file__).parent / "remotion-short"
 PROPS_FILE        = REMOTION_DIR / "inputProps.json"
+PUBLIC_DIR        = REMOTION_DIR / "public"   # onde o áudio é servido
 SHORT_OUTPUT      = Path("short_final.mp4")
 SHORT_AUDIO       = Path("short_audio.mp3")
 SHORT_THUMB       = Path("short_thumb.jpg")
@@ -82,30 +83,31 @@ def get_latest_video():
 
     yt = build("youtube", "v3", credentials=creds)
 
-    # Pega canal próprio
-    me = yt.channels().list(part="id", mine=True).execute()
-    channel_id = me["items"][0]["id"]
+    # Pega canal próprio — usa channels.list (1 unidade de quota vs 100 do search)
+    me         = yt.channels().list(part="contentDetails", mine=True).execute()
+    uploads_id = me["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
-    # Últimos 5 uploads
-    search = yt.search().list(
+    # Pega últimos 5 uploads via playlistItems (1 unidade de quota)
+    pl = yt.playlistItems().list(
         part="snippet",
-        channelId=channel_id,
+        playlistId=uploads_id,
         maxResults=5,
-        order="date",
-        type="video",
     ).execute()
 
-    for item in search.get("items", []):
-        vid_id  = item["id"]["videoId"]
-        title   = item["snippet"]["title"]
-        desc    = item["snippet"].get("description", "")
+    for item in pl.get("items", []):
+        vid_id = item["snippet"]["resourceId"]["videoId"]
+        title  = item["snippet"]["title"]
+        desc   = item["snippet"].get("description", "")
 
-        # Detecta categoria pelos hashtags ou palavras-chave do título/descrição
+        # Filtra Shorts (não usa Short como base)
+        if "#shorts" in title.lower() or "#shorts" in desc.lower():
+            continue
+
         category = detect_category(title + " " + desc)
         print(f"   Último vídeo: [{vid_id}] {title} → categoria: {category}")
         return vid_id, title, category
 
-    raise RuntimeError("Nenhum vídeo encontrado no canal")
+    raise RuntimeError("Nenhum vídeo longo encontrado no canal")
 
 
 def detect_category(text):
@@ -124,7 +126,7 @@ def detect_category(text):
         return "focus_noise"
     if any(w in text for w in ["study", "focus", "concentration"]):
         return "study"
-    return "cozy"  # fallback mais neutro
+    return "cozy"
 
 
 # ─── 2. Baixa áudio via yt-dlp ────────────────────────────
@@ -157,13 +159,12 @@ def cut_best_segment(audio_path, duration_s=SHORT_DURATION_S):
     print(f"   Cortando {duration_s}s do áudio...")
     audio = AudioSegment.from_file(audio_path)
 
-    total_ms    = len(audio)
-    start_ms    = 60_000                          # skip 1min de intro
-    chunk_ms    = duration_s * 1000
-    best_start  = start_ms
-    best_rms    = 0
+    total_ms   = len(audio)
+    start_ms   = 60_000
+    chunk_ms   = duration_s * 1000
+    best_start = start_ms
+    best_rms   = 0
 
-    # Testa a cada 2 minutos qual janela tem mais energia
     for t in range(start_ms, min(total_ms - chunk_ms, 600_000), 120_000):
         rms = audio[t : t + chunk_ms].rms
         if rms > best_rms:
@@ -171,11 +172,8 @@ def cut_best_segment(audio_path, duration_s=SHORT_DURATION_S):
             best_start = t
 
     segment = audio[best_start : best_start + chunk_ms]
-
-    # Fade in/out para loop seamless
     segment = segment.fade_in(FADE_MS).fade_out(FADE_MS)
 
-    # Normaliza
     from pydub.effects import normalize
     segment = normalize(segment)
 
@@ -203,7 +201,6 @@ EVOCATIVE_FALLBACKS = {
 }
 
 def generate_short_title(video_title, category):
-    """Gera título evocativo derivado do título do vídeo longo."""
     if not GROQ_KEY:
         return random.choice(EVOCATIVE_FALLBACKS.get(category, ["The night is yours."]))
 
@@ -221,18 +218,6 @@ Rules:
 - Do NOT repeat words from the original title
 - Tone: intimate, cinematic, quiet
 
-Good examples:
-  "Still raining."
-  "You left the window open."
-  "The fire is still going."
-  "Nobody knows where you are."
-  "One more hour."
-  "The city is still awake."
-
-Bad examples:
-  "Relaxing rain sounds for sleep"
-  "Cozy ambience vol 2"
-
 Output ONLY the title. Nothing else."""
 
     try:
@@ -249,7 +234,6 @@ Output ONLY the title. Nothing else."""
         )
         r.raise_for_status()
         title = r.json()["choices"][0]["message"]["content"].strip().strip('"')
-        # Valida tamanho
         if len(title) < 3 or len(title) > 60:
             raise ValueError(f"Título inválido: {title}")
         print(f"   Título do Short: {title}")
@@ -261,15 +245,12 @@ Output ONLY the title. Nothing else."""
 
 # ─── 5. Gera thumbnail 9:16 via cascade de IA ─────────────
 def generate_thumbnail(video_title, category):
-    """Gera imagem 1080x1920 identidade do canal. Cascade: Together → fal → Gemini → Pollinations → Pexels."""
     base_prompt = CATEGORY_THUMB_PROMPTS.get(category, CATEGORY_THUMB_PROMPTS["cozy"])
-    # Enriquece com palavras-chave do título
-    keywords = " ".join([w for w in video_title.lower().split() if len(w) > 3][:4])
-    prompt = f"{keywords}, {base_prompt}"
+    keywords    = " ".join([w for w in video_title.lower().split() if len(w) > 3][:4])
+    prompt      = f"{keywords}, {base_prompt}"
 
     img = None
 
-    # 1. Together AI FLUX.1-schnell
     if TOGETHER_KEY and img is None:
         try:
             print("   Thumbnail: tentando Together AI FLUX.1...")
@@ -287,7 +268,6 @@ def generate_thumbnail(video_title, category):
         except Exception as e:
             print(f"   Together falhou: {e}")
 
-    # 2. fal.ai FLUX Schnell
     if FAL_KEY and img is None:
         try:
             print("   Thumbnail: tentando fal.ai...")
@@ -306,11 +286,10 @@ def generate_thumbnail(video_title, category):
         except Exception as e:
             print(f"   fal.ai falhou: {e}")
 
-    # 3. Pollinations (sem key)
     if img is None:
         try:
             print("   Thumbnail: tentando Pollinations...")
-            encoded = requests.utils.quote(prompt)
+            encoded = requests.utils.quote(prompt[:350])
             url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={random.randint(1,9999)}"
             resp = requests.get(url, timeout=60)
             resp.raise_for_status()
@@ -319,11 +298,10 @@ def generate_thumbnail(video_title, category):
         except Exception as e:
             print(f"   Pollinations falhou: {e}")
 
-    # 4. Pexels fallback
     if PEXELS_KEY and img is None:
         try:
             print("   Thumbnail: fallback Pexels...")
-            query = CATEGORY_THUMB_PROMPTS.get(category, "cozy night")[:30]
+            query = category.replace("_", " ")
             r = requests.get(
                 "https://api.pexels.com/v1/search",
                 headers={"Authorization": PEXELS_KEY},
@@ -341,7 +319,6 @@ def generate_thumbnail(video_title, category):
             print(f"   Pexels falhou: {e}")
 
     if img is None:
-        # Último fallback: gradiente programático
         print("   Thumbnail: gerando gradiente fallback...")
         img = _make_gradient_thumb()
 
@@ -351,41 +328,41 @@ def generate_thumbnail(video_title, category):
 
 
 def _make_gradient_thumb():
-    img = Image.new("RGB", (1080, 1920))
+    img  = Image.new("RGB", (1080, 1920))
     draw = ImageDraw.Draw(img)
     for y in range(1920):
         t = y / 1920
-        r = int(10  + t * 5)
-        g = int(8   + t * 3)
-        b = int(20  + t * 15)
-        draw.line([(0, y), (1080, y)], fill=(r, g, b))
-    # Adiciona mancha âmbar no canto inferior esquerdo
+        draw.line([(0, y), (1080, y)], fill=(int(10+t*5), int(8+t*3), int(20+t*15)))
     for i in range(200):
-        alpha = 1 - i/200
-        r2 = int(180 * alpha)
-        g2 = int(100 * alpha)
-        b2 = int(20  * alpha)
+        alpha = 1 - i / 200
         draw.ellipse(
             [(100-i*2, 1400-i*2), (600+i*2, 1900+i*2)],
-            fill=(r2, g2, b2),
+            fill=(int(180*alpha), int(100*alpha), int(20*alpha)),
         )
     return img.filter(ImageFilter.GaussianBlur(80))
 
 
-# ─── 6. Salva inputProps.json para o Remotion ─────────────
+# ─── 6. Salva inputProps.json + copia áudio para public/ ──
 def save_input_props(title, category, audio_path, thumb_path, video_id, video_title):
+    # Copia o áudio para remotion-short/public/audio.mp3
+    # O componente acessa via staticFile("audio.mp3")
+    PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
+    dest_audio = PUBLIC_DIR / "audio.mp3"
+    shutil.copy(audio_path, dest_audio)
+    print(f"   Áudio copiado para: {dest_audio}")
+
     props = {
-        "title":          title,
-        "category":       category,
-        "audioPath":      str(Path(audio_path).resolve()),
-        "thumbPath":      str(Path(thumb_path).resolve()),
-        "sourceVideoId":  video_id,
-        "sourceTitle":    video_title,
-        "fps":            SHORT_FPS,
-        "durationSeconds": SHORT_DURATION_S + 4,  # +4 para o loop seamless
-        "generatedAt":    datetime.now().isoformat(),
+        "title":           title,
+        "category":        category,
+        "audioPath":       "audio.mp3",     # staticFile relativo, não absoluto
+        "thumbPath":       str(Path(thumb_path).resolve()),
+        "sourceVideoId":   video_id,
+        "sourceTitle":     video_title,
+        "fps":             SHORT_FPS,
+        "durationSeconds": SHORT_DURATION_S + 4,
+        "generatedAt":     datetime.now().isoformat(),
     }
-    PROPS_FILE.parent.mkdir(exist_ok=True)
+    REMOTION_DIR.mkdir(exist_ok=True)
     with open(PROPS_FILE, "w", encoding="utf-8") as f:
         json.dump(props, f, ensure_ascii=False, indent=2)
     print(f"   Props salvas: {PROPS_FILE}")
@@ -398,11 +375,17 @@ def render_with_remotion():
     subprocess.run(["npm", "install"], cwd=REMOTION_DIR, check=True, capture_output=True)
 
     print("   Renderizando Short com Remotion...")
+    env = os.environ.copy()
+    # Passa o path do Chromium para o render-short.mjs
+    if not env.get("CHROMIUM_PATH") and os.path.exists("/usr/bin/chromium-browser"):
+        env["CHROMIUM_PATH"] = "/usr/bin/chromium-browser"
+
     result = subprocess.run(
         ["node", "render-short.mjs"],
         cwd=REMOTION_DIR,
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         print(result.stdout[-2000:])
@@ -446,7 +429,7 @@ def upload_short(title, category, video_id, thumb_path):
         f"{title}\n\n"
         f"🎧 Full version → https://www.youtube.com/watch?v={video_id}\n\n"
         f"Nocturne Noise — sounds for wherever you want to be.\n"
-        f"Subscribe for new soundscapes every week → https://www.youtube.com/@NocturneNoise\n\n"
+        f"Subscribe → https://www.youtube.com/@NocturneNoiseYT\n\n"
         f"{hashtag_map.get(category, '#nocturnoise #shorts')}"
     )
 
@@ -457,11 +440,12 @@ def upload_short(title, category, video_id, thumb_path):
         part="snippet,status",
         body={
             "snippet": {
-                "title":       f"{title} #shorts",
-                "description": description,
-                "tags":        ["shorts", "nocturne noise", "soundscape", category,
-                                "ambient", "lofi", "sleep sounds", "relaxing"],
-                "categoryId":  "10",
+                "title":           f"{title} #shorts",
+                "description":     description,
+                "tags":            ["shorts", "nocturne noise", "soundscape", category,
+                                    "ambient", "lofi", "sleep sounds", "relaxing"],
+                "categoryId":      "10",
+                "defaultLanguage": "en",        # FIX: não PT
             },
             "status": {
                 "privacyStatus":           "public",
@@ -479,7 +463,6 @@ def upload_short(title, category, video_id, thumb_path):
     short_url = f"https://www.youtube.com/shorts/{short_id}"
     print(f"   Short publicado: {short_url}")
 
-    # Thumbnail dedicada
     if thumb_path and Path(thumb_path).exists():
         try:
             yt.thumbnails().set(
@@ -504,37 +487,34 @@ def main():
     args_cli = ap.parse_args()
     print(f"\nNOCTURNE NOISE SHORTS — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # Busca último vídeo
     print("\n[1/8] Buscando último vídeo publicado...")
     video_id, video_title, category = get_latest_video()
 
-    # Baixa áudio
     print("\n[2/8] Baixando áudio via yt-dlp...")
     raw_audio = download_audio(video_id)
 
-    # Corta trecho
     print("\n[3/8] Cortando melhor trecho...")
     short_audio = cut_best_segment(raw_audio)
 
-    # Gera título
     print("\n[4/8] Gerando título evocativo...")
     short_title = generate_short_title(video_title, category)
 
-    # Gera thumbnail
     print("\n[5/8] Gerando thumbnail 9:16...")
     thumb_path = generate_thumbnail(video_title, category)
 
-    # Salva props
-    print("\n[6/8] Salvando inputProps para Remotion...")
+    print("\n[6/8] Salvando inputProps + copiando áudio para public/...")
     save_input_props(short_title, category, short_audio, thumb_path, video_id, video_title)
 
-    # Renderiza
     print("\n[7/8] Renderizando com Remotion...")
     render_with_remotion()
 
-    # Upload
-    print("\n[8/8] Fazendo upload do Short...")
-    url = upload_short(short_title, category, video_id, thumb_path)
+    if not args_cli.skip_upload:
+        print("\n[8/8] Fazendo upload do Short...")
+        url = upload_short(short_title, category, video_id, thumb_path)
+        print(f"\n✓ SHORT PUBLICADO: {url}")
+    else:
+        print("\n⚠️  Upload pulado (--skip-upload)")
+        url = str(SHORT_OUTPUT)
 
     # Cleanup
     for f in [raw_audio, str(SHORT_AUDIO)]:
@@ -543,7 +523,6 @@ def main():
         except Exception:
             pass
 
-    print(f"\n✓ SHORT PUBLICADO: {url}")
     print(f"  Título: {short_title}")
     print(f"  Baseado em: {video_title}")
 
