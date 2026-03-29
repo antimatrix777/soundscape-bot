@@ -45,7 +45,7 @@ def run(script, extra_args=None):
 def cleanup():
     print("\nLimpando arquivos temporarios...")
     for pat in ["output_audio.mp3", "background.jpg", "thumbnail.jpg",
-                "video_*.mp4", "sounds_tmp/*.mp3", "metadata_*.json"]:
+                "video_*.mp4", "audio_tmp/*.mp3", "metadata_*.json"]:
         for f in glob.glob(pat):
             try:
                 os.remove(f)
