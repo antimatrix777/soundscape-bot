@@ -13,9 +13,18 @@ TARGET_LUFS = -18
 MIN_SAMPLE_SEC = 45
 SAMPLE_RATE = 44100
 
-BAD_TAGS = {"voice","speech","talk","vocal","sing","song","music","people","human"}
+# Tags que indicam CERTAMENTE voz/fala — sempre bloqueados
+STRICT_BAD_TAGS = {"voice","speech","talk","vocal","sing","song",
+                   "music","people","human","crowd","chatter",
+                   "conversation","spoken","narration","radio","broadcast"}
 
-_BAD_WORDS_PATTERN = re.compile(r'\b(voice|speech|talk|song|vocal|podcast|interview)\b', re.I)
+# Tags bloqueadas apenas no filtro estrito (ambiente pode ter fundo de pessoas)
+SOFT_BAD_TAGS = {"voice","speech","talk","vocal","sing","song"}
+
+_BAD_WORDS_PATTERN = re.compile(
+    r'\b(voice|speech|talk|song|vocal|podcast|interview|'
+    r'crowd|chatter|conversation|narrat|spoken|radio|broadcast)\b', re.I
+)
 
 def has_bad_content(name):
     return bool(_BAD_WORDS_PATTERN.search(name))
@@ -44,16 +53,33 @@ def freesound_search(query, num=10):
     r.raise_for_status()
     results = r.json().get("results", [])
 
+    if not results:
+        raise RuntimeError("Freesound: API retornou zero resultados para a query")
+
+    # Filtro estrito — bloqueia music, people, crowd, etc.
     clean = [
         s for s in results
-        if not ({t.lower() for t in s.get("tags", [])} & BAD_TAGS)
+        if not ({t.lower() for t in s.get("tags", [])} & STRICT_BAD_TAGS)
         and not has_bad_content(s.get("name",""))
     ]
 
-    if not clean:
-        raise RuntimeError("Freesound empty")
+    if clean:
+        return clean[:num]
 
-    return clean[:num]
+    # Filtro leve — só bloqueia voz explícita; aceita ambientes com pessoas ao fundo
+    print("   [Freesound] Filtro estrito zerou resultados — usando filtro leve")
+    soft = [
+        s for s in results
+        if not ({t.lower() for t in s.get("tags", [])} & SOFT_BAD_TAGS)
+        and not has_bad_content(s.get("name",""))
+    ]
+
+    if soft:
+        return soft[:num]
+
+    # Último recurso — retorna os primeiros sem filtro (melhor que crashar)
+    print("   [Freesound] Filtro leve também zerou — usando resultados sem filtro")
+    return results[:num]
 
 
 def freesound_download(sound):
