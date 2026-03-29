@@ -65,12 +65,12 @@ THEMES = {
         {"theme": "winter jazz by the fireplace",      "query": "jazz warm cozy instrumental",     "tags": "jazz",        "pexels": "fireplace winter cozy"},
     ],
     "focus_noise": [
-        {"theme": "brown noise for deep focus",        "noise_type": "brown", "pexels": "minimalist desk study"},
-        {"theme": "white noise for concentration",     "noise_type": "white", "pexels": "clean minimal workspace"},
-        {"theme": "pink noise for studying",           "noise_type": "pink",  "pexels": "student studying calm"},
-        {"theme": "soft brown noise for sleep",        "noise_type": "brown", "pexels": "bedroom night peaceful"},
-        {"theme": "gentle white noise for baby sleep", "noise_type": "white", "pexels": "peaceful nursery soft light"},
-        {"theme": "brown noise with distant rain",     "noise_type": "brown", "pexels": "rainy window night desk"},
+        {"theme": "brown noise for deep focus",        "noise_type": "brown", "query": "brown noise", "pexels": "minimalist desk study"},
+        {"theme": "white noise for concentration",     "noise_type": "white", "query": "white noise", "pexels": "clean minimal workspace"},
+        {"theme": "pink noise for studying",           "noise_type": "pink",  "query": "pink noise",  "pexels": "student studying calm"},
+        {"theme": "soft brown noise for sleep",        "noise_type": "brown", "query": "brown noise sleep", "pexels": "bedroom night peaceful"},
+        {"theme": "gentle white noise for baby sleep", "noise_type": "white", "query": "white noise baby", "pexels": "peaceful nursery soft light"},
+        {"theme": "brown noise with distant rain",     "noise_type": "brown", "query": "brown noise rain", "pexels": "rainy window night desk"},
     ],
     "study": [
         {"theme": "late night study session with rain",  "query": "study rain indoor soft",     "pexels": "desk lamp study rain"},
