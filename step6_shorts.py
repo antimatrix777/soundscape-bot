@@ -131,6 +131,8 @@ def download_audio(video_id):
     print(f"   Baixando áudio: {url}")
     result = subprocess.run([
         "yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        # Use common clients to bypass bot detection (fallback layer)
+        "--extractor-args", "youtube:player_client=android,web",
         "-o", "yt_audio_raw.%(ext)s", "--no-playlist", url,
     ], capture_output=True, text=True)
     if result.returncode != 0:
@@ -196,8 +198,10 @@ def generate_short_title(video_title, category):
                 "model":    "llama-3.3-70b-versatile",
                 "messages": [{"role": "user", "content":
                     f'Video: "{video_title}" | Category: {category}\n'
-                    f"Write 1 evocative Short title. Max 7 words. Lowercase. "
-                    f"Second person or atmospheric fragment. Output ONLY the title."}],
+                    f"Write 1 punchy, evocative Short title (max 5 words). Lowercase. "
+                    f"Use a second person 'hook' or atmospheric mystery. "
+                    f"Example: 'the rain found you again.' or 'stay a little longer.' "
+                    f"Output ONLY the title string."}],
                 "temperature": 0.9, "max_tokens": 25,
             },
             timeout=20,
@@ -350,9 +354,9 @@ def add_title_to_frame(thumb_path, title):
               fill=(200, 160, 80), width=2)
 
     # Título — quebra em linhas se necessário
-    font_size = 88
+    font_size = 96  # Increased from 88 for better 'hook' visibility
     font      = get_font(font_size)
-    max_w     = int(W * 0.82)
+    max_w     = int(W * 0.88) # Slightly wider
 
     # Reduz fonte se o texto for muito largo
     while font_size > 32:
@@ -378,10 +382,10 @@ def add_title_to_frame(thumb_path, title):
         lw   = bbox[2] - bbox[0]
         x    = (W - lw) // 2
         y    = text_y + i * line_h
-        # Sombra
-        draw.text((x + 2, y + 2), line, font=font, fill=(0, 0, 0, 180))
-        # Texto principal — creme quente
-        draw.text((x, y), line, font=font, fill=(240, 232, 208))
+        # Sombra profunda para destacar o título
+        draw.text((x + 4, y + 4), line, font=font, fill=(0, 0, 0, 220))
+        # Texto principal — creme quente com leve brilho
+        draw.text((x, y), line, font=font, fill=(255, 245, 220))
 
     # "Nocturne Noise" abaixo do título
     small_font = get_font(28)
@@ -548,11 +552,19 @@ def main():
     print("\n[1/7] Buscando último vídeo publicado...")
     video_id, video_title, category = get_latest_video()
 
-    print("\n[2/7] Baixando áudio via yt-dlp...")
-    raw_audio = download_audio(video_id)
-
-    print("\n[3/7] Cortando melhor trecho...")
-    short_audio = cut_best_segment(raw_audio)
+    print("\n[2/7] Preparando áudio para o Short...")
+    # Se o áudio já existe (passado via Artifact), pulamos o download
+    if os.path.exists(str(SHORT_AUDIO)):
+        print(f"   ✓ Usando áudio existente: {SHORT_AUDIO}")
+        short_audio = str(SHORT_AUDIO)
+    else:
+        print("   Baixando áudio via yt-dlp (fallback)...")
+        raw_audio = download_audio(video_id)
+        print("\n[3/7] Cortando melhor trecho...")
+        short_audio = cut_best_segment(raw_audio)
+        # Limpa o raw
+        try: os.remove(raw_audio)
+        except: pass
 
     print("\n[4/7] Gerando título evocativo...")
     short_title = generate_short_title(video_title, category)
@@ -571,10 +583,12 @@ def main():
     else:
         print("\n⚠️  Upload pulado (--skip-upload)")
 
-    # Cleanup
-    for f in [raw_audio, str(SHORT_AUDIO), str(SHORT_FRAME)]:
+    # Cleanup: só deleta se não for o arquivo de artefato original baixado
+    for f in [str(SHORT_AUDIO), str(SHORT_FRAME)]:
         try:
-            Path(f).unlink(missing_ok=True)
+            # Se baixamos via yt-dlp, limpamos. Se veio via Artifact, o workflow limpa no final.
+            if Path(f).exists():
+                Path(f).unlink(missing_ok=True)
         except Exception:
             pass
 
