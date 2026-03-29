@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 FREESOUND_KEY = os.environ.get("FREESOUND_API_KEY", "")
-PIXABAY_KEY   = os.environ.get("PIXABAY_API_KEY", "")
 JAMENDO_KEY   = os.environ.get("JAMENDO_CLIENT_ID", "")
 
 TARGET_LUFS = -18
@@ -79,43 +78,6 @@ def freesound_download(sound):
 def fetch_freesound(query):
     sounds = freesound_search(query)
     files = [freesound_download(s) for s in sounds]
-    return load_segments(files)
-
-
-# ══════════════════════════════════════════════════════════
-# PIXABAY
-# ══════════════════════════════════════════════════════════
-
-def fetch_pixabay(query):
-    if not PIXABAY_KEY:
-        raise ValueError("PIXABAY_API_KEY not set")
-
-    r = requests.get(
-        "https://pixabay.com/api/sounds/",
-        params={"key": PIXABAY_KEY, "q": query},
-        timeout=30
-    )
-
-    hits = r.json().get("hits", [])
-    if not hits:
-        raise RuntimeError("Pixabay empty")
-
-    files = []
-    os.makedirs("audio_tmp", exist_ok=True)
-
-    for h in hits[:5]:
-        url = h.get("audio")
-        if not url:
-            continue
-
-        path = f"audio_tmp/pb_{h['id']}.mp3"
-        if not os.path.exists(path):
-            r2 = requests.get(url)
-            with open(path, "wb") as f:
-                f.write(r2.content)
-
-        files.append(path)
-
     return load_segments(files)
 
 
@@ -207,10 +169,7 @@ def main():
     if category == "jazz":
         segs = fetch_jamendo()
     else:
-        try:
-            segs = fetch_freesound(data["theme"])
-        except:
-            segs = fetch_pixabay(data["theme"])
+        segs = fetch_freesound(data["theme"])
 
     audio = loop_audio(segs, duration)
 
