@@ -113,18 +113,11 @@ def fetch_freesound(data):
     except RuntimeError:
         print(f"   [Freesound] Zero resultados para '{primary_query}'")
         
-        # Fallback para focus_noise
-        if data.get("category") == "focus_noise":
-            noise_type = data["theme_data"].get("noise_type", "brown")
-            fallback = f"{noise_type} noise"
-            print(f"   [Freesound] Usando fallback noise: {fallback}")
-            sounds = freesound_search(fallback)
-        else:
-            # Fallback genérico: tenta os primeiros 2 termos
-            words = primary_query.split()
-            fallback = " ".join(words[:2]) if len(words) > 1 else words[0]
-            print(f"   [Freesound] Usando fallback genérico: {fallback}")
-            sounds = freesound_search(fallback)
+        # Fallback genérico: tenta os primeiros 2 termos
+        words = primary_query.split()
+        fallback = " ".join(words[:2]) if len(words) > 1 else words[0]
+        print(f"   [Freesound] Usando fallback genérico: {fallback}")
+        sounds = freesound_search(fallback)
 
     files = [freesound_download(s) for s in sounds]
     return load_segments(files)
