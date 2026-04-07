@@ -233,7 +233,6 @@ Cinematic line rules:
 - Short, evocative, scene-setting - like a story in one line
 - Intimate, second person when possible
 - Specific moment, not a product category
-- For category "urban": ALWAYS include the city name
 
 Good full title examples:
   "Rain Sounds for Sleep • You Forgot to Close the Window"
