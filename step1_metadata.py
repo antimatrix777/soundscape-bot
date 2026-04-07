@@ -31,28 +31,8 @@ THEMES = {
         {"theme": "light drizzle at night city",     "query": "light rain city night",  "pexels": "city rain night"},
         {"theme": "rain on tent in forest",          "query": "rain tent camping",      "pexels": "tent forest rain"},
         {"theme": "rain on lake surface",            "query": "rain lake water",        "pexels": "rain lake"},
-    ],
-    "nature": [
-        {"theme": "soft forest ambience with gentle birds",  "query": "forest birds soft ambience",  "pexels": "misty forest morning"},
-        {"theme": "ocean waves on sandy beach",              "query": "ocean waves beach soft",      "pexels": "ocean waves sandy beach"},
-        {"theme": "gentle river flowing through forest",     "query": "river stream forest",         "pexels": "river forest"},
-        {"theme": "distant waterfall in forest",             "query": "waterfall distant forest",    "pexels": "waterfall forest"},
-        {"theme": "wind through pine trees softly",          "query": "wind pine trees gentle",      "pexels": "pine forest wind"},
-        {"theme": "calm birds singing at dawn",              "query": "birds dawn morning gentle",   "pexels": "sunrise forest birds"},
-        {"theme": "mountain stream babbling",                "query": "mountain stream babbling",    "pexels": "mountain stream"},
-        {"theme": "summer meadow soft breeze",               "query": "meadow breeze summer",        "pexels": "green meadow summer"},
-    ],
-    "cozy": [
-        {"theme": "cozy coffee shop ambience morning",     "query": "coffee shop cafe ambience",     "pexels": "cozy coffee shop"},
-        {"theme": "fireplace crackling cozy indoors",      "query": "fireplace crackling wood fire", "pexels": "fireplace cozy"},
-        {"theme": "quiet library ambience soft",           "query": "library quiet ambience",        "pexels": "cozy library books"},
-        {"theme": "japanese tea house ambience",           "query": "tea house soft ambience",       "pexels": "japanese tea house"},
-        {"theme": "bookstore with rain outside",           "query": "bookstore indoor ambience",     "pexels": "bookstore cozy rain"},
-        {"theme": "cozy cabin during snowstorm",           "query": "cabin indoor fire snow",        "pexels": "cabin snow winter cozy"},
-        {"theme": "bakery ambience early morning",         "query": "bakery morning ambience",       "pexels": "bakery morning"},
-        {"theme": "rainy afternoon indoors with kettle",   "query": "indoor rain kettle soft",       "pexels": "cozy home rain"},
-        {"theme": "vintage reading nook with fireplace",   "query": "fireplace crackling gentle",    "pexels": "reading nook vintage books"},
-        {"theme": "cozy bed and breakfast morning",        "query": "morning indoor soft ambience",  "pexels": "cozy morning bedroom"},
+        {"theme": "thunderstorm with heavy lightning",  "query": "thunderstorm lightning",  "pexels": "lightning storm night"},
+        {"theme": "rolling thunder in the distance",    "query": "rolling thunder distant", "pexels": "dark storm clouds"},
     ],
     "jazz": [
         {"theme": "late night jazz cafe",              "query": "jazz cafe night instrumental",    "tags": "jazz",        "pexels": "jazz cafe night"},
@@ -64,25 +44,15 @@ THEMES = {
         {"theme": "peaceful jazz trio afternoon",      "query": "jazz trio acoustic peaceful",     "tags": "jazz",        "pexels": "jazz musician"},
         {"theme": "winter jazz by the fireplace",      "query": "jazz warm cozy instrumental",     "tags": "jazz",        "pexels": "fireplace winter cozy"},
     ],
-    "focus_noise": [
-        {"theme": "brown noise for deep focus",        "noise_type": "brown", "query": "brown noise", "pexels": "minimalist desk study"},
-        {"theme": "white noise for concentration",     "noise_type": "white", "query": "white noise", "pexels": "clean minimal workspace"},
-        {"theme": "pink noise for studying",           "noise_type": "pink",  "query": "pink noise",  "pexels": "student studying calm"},
-        {"theme": "soft brown noise for sleep",        "noise_type": "brown", "query": "brown noise sleep", "pexels": "bedroom night peaceful"},
-        {"theme": "gentle white noise for baby sleep", "noise_type": "white", "query": "white noise baby", "pexels": "peaceful nursery soft light"},
-        {"theme": "brown noise with distant rain",     "noise_type": "brown", "query": "brown noise rain", "pexels": "rainy window night desk"},
-    ],
-    "study": [
-        {"theme": "late night study session with rain",  "query": "study rain indoor soft",     "pexels": "desk lamp study rain"},
-        {"theme": "quiet library late at night",         "query": "library quiet night",        "pexels": "library night lamp"},
-        {"theme": "morning study cafe with soft music",  "query": "cafe morning soft ambience", "pexels": "cafe morning study"},
-        {"theme": "focused study room afternoon",        "query": "indoor quiet focus room",    "pexels": "study room afternoon light"},
-    ],
-    "urban": [
-        {"theme": "rainy night in tokyo",             "query": "rain city night japan",      "pexels": "tokyo rain night"},
-        {"theme": "paris cafe terrace evening",       "query": "paris cafe outdoor evening", "pexels": "paris cafe evening"},
-        {"theme": "new york apartment rain at night", "query": "city rain night apartment",  "pexels": "new york apartment rain"},
-        {"theme": "london evening rain street",       "query": "london rain evening street", "pexels": "london rain evening"},
+    "lofi": [
+        {"theme": "lofi beats for late night studying",    "query": "lofi study beats chill",         "tags": "lofi",        "pexels": "desk lamp night study"},
+        {"theme": "lofi chill morning vibes",             "query": "lofi morning chill relaxing",    "tags": "lofi chill",  "pexels": "morning window sunlight"},
+        {"theme": "rainy lofi hip hop",                   "query": "lofi hip hop rain chill",        "tags": "lofi",        "pexels": "rain window cozy desk"},
+        {"theme": "lofi cafe beats afternoon",            "query": "lofi cafe chill beats",          "tags": "lofi cafe",   "pexels": "cozy cafe afternoon"},
+        {"theme": "sleepy lofi beats for relaxation",     "query": "lofi sleep relax calm",          "tags": "lofi sleep",  "pexels": "bedroom night calm"},
+        {"theme": "lofi jazz hop evening",                "query": "lofi jazz hop instrumental",     "tags": "lofi jazz",   "pexels": "vinyl record player"},
+        {"theme": "nostalgic lofi beats sunset",          "query": "lofi nostalgic sunset chill",    "tags": "lofi",        "pexels": "sunset window golden"},
+        {"theme": "lofi beats cozy winter night",         "query": "lofi winter cozy beats",         "tags": "lofi winter", "pexels": "snow window night cozy"},
     ],
 }
 
@@ -96,20 +66,7 @@ KEYWORD_CLUSTERS = {
         "Heavy Rain Sounds",
         "Rain Sounds",
         "Relaxing Rain",
-    ],
-    "nature": [
-        "Forest Sounds",
-        "Nature Sounds for Sleep",
-        "Bird Sounds Morning",
-        "Nature Ambience",
-        "Relaxing Nature Sounds",
-    ],
-    "cozy": [
-        "Coffee Shop Ambience",
-        "Cozy Cafe Sounds",
-        "Fireplace Sounds",
-        "Cozy Ambience",
-        "Cafe Background Noise",
+        "Thunderstorm Sounds",
     ],
     "jazz": [
         "Late Night Jazz",
@@ -118,50 +75,25 @@ KEYWORD_CLUSTERS = {
         "Jazz for Studying",
         "Relaxing Jazz Music",
     ],
-    "focus_noise": [
-        "Brown Noise for Focus",
-        "White Noise for Sleep",
-        "Pink Noise for Studying",
-        "Brown Noise",
-        "Focus Sounds",
-    ],
-    "study": [
-        "Study Music",
-        "Study With Me",
-        "Music for Studying",
-        "Study Ambience",
-        "Focus Music for Studying",
-    ],
-    "urban": [
-        "Tokyo Night Ambience",
-        "City Rain Sounds",
-        "Paris Cafe Ambience",
-        "Urban Night Sounds",
-        "City Ambience at Night",
+    "lofi": [
+        "Lofi Beats",
+        "Lofi Hip Hop",
+        "Lofi Music for Studying",
+        "Chill Lofi Beats",
+        "Lofi Chill Music",
     ],
 }
 
 USE_CASE_TAGS = {
-    "rain":        ["rain sounds for sleep", "rain for studying", "rain to fall asleep",
-                    "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours"],
-    "nature":      ["nature sounds for sleep", "nature sounds for studying",
-                    "nature sounds meditation", "nature sounds relaxation",
-                    "nature sounds 2 hours", "nature sounds 3 hours"],
-    "cozy":        ["cozy sounds for studying", "cafe ambience for work",
-                    "coffee shop sounds for studying", "cozy background noise",
-                    "fireplace sounds for sleep", "cozy ambience 2 hours"],
-    "jazz":        ["jazz for studying", "jazz for working", "jazz for sleep",
-                    "jazz background music", "jazz focus music", "jazz 2 hours",
-                    "jazz 3 hours", "smooth jazz for studying"],
-    "focus_noise": ["brown noise for adhd", "brown noise for studying",
-                    "brown noise for sleep", "white noise for focus",
-                    "pink noise for concentration", "focus sounds 2 hours"],
-    "study":       ["study music for concentration", "study music 2 hours",
-                    "music for studying and focus", "study background music",
-                    "study with me ambient", "lofi study music"],
-    "urban":       ["city sounds for sleep", "city ambience for studying",
-                    "urban sounds for focus", "city rain for sleep",
-                    "city background noise", "urban ambience 2 hours"],
+    "rain":  ["rain sounds for sleep", "rain for studying", "rain to fall asleep",
+              "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours",
+              "thunderstorm sounds for sleep", "thunder and rain"],
+    "jazz":  ["jazz for studying", "jazz for working", "jazz for sleep",
+              "jazz background music", "jazz focus music", "jazz 2 hours",
+              "jazz 3 hours", "smooth jazz for studying"],
+    "lofi":  ["lofi for studying", "lofi for sleep", "lofi beats to relax",
+              "lofi hip hop study", "lofi chill beats", "lofi 2 hours",
+              "lofi 3 hours", "lofi music for work"],
 }
 
 # ─────────────────────────────────────────────────────────
@@ -214,13 +146,9 @@ def mark_theme_used(theme_name):
 # HASHTAGS PER CATEGORY
 # ─────────────────────────────────────────────────────────
 CATEGORY_HASHTAGS = {
-    "rain":        "#nocturnoise #rainambience #sleepsounds #rainsounds #relaxingsounds",
-    "nature":      "#nocturnoise #naturesounds #ambientmusic #relaxingsounds #naturetherapy",
-    "cozy":        "#nocturnoise #cozyambience #lofi #cafesounds #cozysounds",
-    "jazz":        "#nocturnoise #jazzambience #instrumentaljazz #smoothjazz #jazzmusic",
-    "focus_noise": "#nocturnoise #brownnoise #focusmusic #studymusic #whitenoise",
-    "study":       "#nocturnoise #studyambience #lofi #studymusic #focusmusic",
-    "urban":       "#nocturnoise #cityambience #nightsounds #urbansounds #citysounds",
+    "rain":  "#nocturnoise #rainambience #sleepsounds #rainsounds #relaxingsounds #thunderstorm",
+    "jazz":  "#nocturnoise #jazzambience #instrumentaljazz #smoothjazz #jazzmusic",
+    "lofi":  "#nocturnoise #lofi #lofihiphop #lofibeats #chillbeats #studymusic",
 }
 
 # ─────────────────────────────────────────────────────────
@@ -233,20 +161,7 @@ FALLBACK_TITLES = {
         "Rainy Night Ambience • The Rain Started While You Were Reading",
         "Rain Sounds • A Quiet Night with Nothing to Worry About",
         "Relaxing Rain • It's Been Raining Since This Morning",
-    ],
-    "nature": [
-        "Forest Sounds • Somewhere Far from Everything",
-        "Nature Sounds for Sleep • The River Has Been Running for a Thousand Years",
-        "Bird Sounds Morning • You Found a Clearing in the Woods",
-        "Nature Ambience • A Quiet Morning at the Edge of the Forest",
-        "Relaxing Nature Sounds • The Waterfall You Heard Before You Saw It",
-    ],
-    "cozy": [
-        "Coffee Shop Ambience • A Quiet Corner, Just You",
-        "Fireplace Sounds • The Fire Is Still Going",
-        "Cozy Cafe Sounds • Nobody Else Is Here Right Now",
-        "Cafe Background Noise • Stay In Tonight",
-        "Cozy Ambience • The Kettle Is On, Sit Down",
+        "Thunderstorm Sounds • The Storm Arrived Without Warning",
     ],
     "jazz": [
         "Late Night Jazz • For Nobody in Particular",
@@ -255,37 +170,19 @@ FALLBACK_TITLES = {
         "Jazz for Studying • A Jazz Bar Somewhere in Paris",
         "Relaxing Jazz Music • One More Song Before We Go",
     ],
-    "focus_noise": [
-        "Brown Noise for Focus • Block Everything Out",
-        "White Noise for Sleep • Just You and the Work",
-        "Brown Noise • Everything Else Fades",
-        "Focus Sounds • Deep in the Work",
-        "Pink Noise for Studying • Quiet Enough to Think",
-    ],
-    "study": [
-        "Study Music • The Library at Midnight",
-        "Music for Studying • One More Chapter",
-        "Study Ambience • Late Night, Just You and the Books",
-        "Study With Me • The Desk Lamp Is Still On",
-        "Focus Music for Studying • Studying While the World Sleeps",
-    ],
-    "urban": [
-        "Tokyo Night Ambience • 3AM and the City Is Still Breathing",
-        "City Rain Sounds • The City from Your Window",
-        "Paris Cafe Ambience • Rain on the Streets Below",
-        "Urban Night Sounds • The Last Train Already Left",
-        "City Ambience at Night • Somewhere Out There, It's Still Going",
+    "lofi": [
+        "Lofi Beats • The Playlist That Never Ends",
+        "Lofi Hip Hop • Late Night, Headphones On",
+        "Chill Lofi Beats • You Pressed Play and Forgot the World",
+        "Lofi Music for Studying • The Coffee Got Cold Hours Ago",
+        "Lofi Chill Music • Sunday Morning, No Plans",
     ],
 }
 
 CATEGORY_CONTEXT = {
-    "rain":        ("sleep, relaxation, and stress relief",      "rain sounds, sleep sounds, relaxing rain"),
-    "nature":      ("relaxation, meditation, and mindfulness",   "nature sounds, calming nature, ambient sounds"),
-    "cozy":        ("relaxation, focus, and cozy comfort",       "cozy ambience, cafe sounds, background noise"),
-    "jazz":        ("late night focus, relaxation, and mood",    "jazz music, instrumental jazz, background jazz"),
-    "focus_noise": ("deep focus, studying, and sleep",           "brown noise, white noise, focus sounds"),
-    "study":       ("studying, concentration, and productivity", "study music, focus background, lofi ambience"),
-    "urban":       ("relaxation, mood, and urban comfort",       "city sounds, urban ambience, night sounds"),
+    "rain":  ("sleep, relaxation, and stress relief",   "rain sounds, sleep sounds, relaxing rain, thunderstorm"),
+    "jazz":  ("late night focus, relaxation, and mood", "jazz music, instrumental jazz, background jazz"),
+    "lofi":  ("studying, relaxation, and chill vibes",  "lofi beats, lofi hip hop, chill music, study beats"),
 }
 
 SYSTEM_PROMPT = """You are a YouTube SEO specialist for an ambient/soundscape channel called 'Nocturne Noise'.
