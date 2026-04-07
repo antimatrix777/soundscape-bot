@@ -194,13 +194,9 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
     # Adiciona à playlist da categoria
     category    = metadata.get("category", "")
     env_key_map = {
-        "rain":        "PLAYLIST_RAIN",
-        "nature":      "PLAYLIST_NATURE",
-        "cozy":        "PLAYLIST_COZY",
-        "jazz":        "PLAYLIST_JAZZ",
-        "focus_noise": "PLAYLIST_FOCUS",
-        "study":       "PLAYLIST_STUDY",
-        "urban":       "PLAYLIST_URBAN",
+        "rain":  "PLAYLIST_RAIN",
+        "jazz":  "PLAYLIST_JAZZ",
+        "lofi":  "PLAYLIST_LOFI",
     }
     playlist_id = os.environ.get(env_key_map.get(category, ""), "")
     if playlist_id:
