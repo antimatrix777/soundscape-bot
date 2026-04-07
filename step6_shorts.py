@@ -47,13 +47,9 @@ STYLE_BASE = (
 )
 
 CATEGORY_PROMPTS = {
-    "rain":        f"rain drops on window glass at night, steaming coffee mug, warm desk lamp, city lights blurred through rain, {STYLE_BASE}",
-    "nature":      f"misty forest at dawn, wooden desk near large window, fern plants, soft morning fog, {STYLE_BASE}",
-    "cozy":        f"crackling fireplace close-up, armchair with wool blanket, open book, cup of tea, {STYLE_BASE}",
-    "jazz":        f"vinyl record spinning on turntable, warm amber light, jazz album covers on shelf, headphones, {STYLE_BASE}",
-    "focus_noise": f"minimalist home office at night, single desk lamp, open notebook, clean aesthetic, city through window, {STYLE_BASE}",
-    "study":       f"late night study desk, open books, coffee, warm lamp, rain visible outside window, {STYLE_BASE}",
-    "urban":       f"city rain at night, neon reflections on wet pavement, cozy window view from above, {STYLE_BASE}",
+    "rain": f"rain drops on window glass at night, steaming coffee mug, warm desk lamp, city lights blurred through rain, {STYLE_BASE}",
+    "jazz": f"vinyl record spinning on turntable, warm amber light, jazz album covers on shelf, headphones, {STYLE_BASE}",
+    "lofi": f"cozy desk at night with headphones, lo-fi vinyl aesthetic, warm lamp glow, open notebook, city lights through window, {STYLE_BASE}",
 }
 
 
@@ -108,21 +104,13 @@ def get_latest_video():
 
 def detect_category(text):
     text = text.lower()
-    if any(w in text for w in ["rain", "raining", "drizzle", "storm", "thunder"]):
+    if any(w in text for w in ["rain", "raining", "drizzle", "storm", "thunder", "lightning"]):
         return "rain"
     if any(w in text for w in ["jazz", "piano", "bossa", "saxophone"]):
         return "jazz"
-    if any(w in text for w in ["fire", "fireplace", "cozy", "café", "cafe", "library", "cabin"]):
-        return "cozy"
-    if any(w in text for w in ["forest", "ocean", "river", "waterfall", "bird", "nature"]):
-        return "nature"
-    if any(w in text for w in ["tokyo", "paris", "london", "new york", "city", "urban", "neon"]):
-        return "urban"
-    if any(w in text for w in ["brown noise", "white noise", "pink noise"]):
-        return "focus_noise"
-    if any(w in text for w in ["study", "focus", "concentration"]):
-        return "study"
-    return "cozy"
+    if any(w in text for w in ["lofi", "lo-fi", "lo fi", "chill beats", "hip hop beats"]):
+        return "lofi"
+    return "rain"
 
 
 # ─── 2. Baixa áudio via yt-dlp ────────────────────────────
@@ -171,20 +159,12 @@ def cut_best_segment(audio_path):
 
 # ─── 4. Gera título evocativo via Groq ────────────────────
 EVOCATIVE_FALLBACKS = {
-    "rain":        ["Still raining.", "You left the window open.", "It won't stop tonight.",
-                    "The rain found you again.", "Let it rain a little longer."],
-    "cozy":        ["The fire is still going.", "Stay a little longer.", "No one needs you right now.",
-                    "Just this corner of the world.", "Nothing to do but be here."],
-    "nature":      ["Nobody knows where you are.", "The forest doesn't need anything from you.",
-                    "You found the quiet place.", "Still here. Still breathing."],
-    "jazz":        ["One more song.", "The piano player stayed late.", "The bar is almost empty.",
-                    "Nobody's leaving yet.", "Just the music now."],
-    "focus_noise": ["Disappear into the work.", "Everything else fades.",
-                    "The world can wait.", "Block it all out."],
-    "study":       ["One more hour.", "The lamp is still on.", "Late night. Just you.",
-                    "You still have time.", "The desk is yours tonight."],
-    "urban":       ["The city is still awake.", "The lights never really go out.",
-                    "Somewhere out there, the night goes on."],
+    "rain": ["Still raining.", "You left the window open.", "It won't stop tonight.",
+             "The rain found you again.", "Let it rain a little longer."],
+    "jazz": ["One more song.", "The piano player stayed late.", "The bar is almost empty.",
+             "Nobody's leaving yet.", "Just the music now."],
+    "lofi": ["Press play and disappear.", "The playlist never ends.",
+             "Headphones on, world off.", "One more beat.", "Stay in the loop."],
 }
 
 def generate_short_title(video_title, category):
@@ -218,7 +198,7 @@ def generate_short_title(video_title, category):
 
 # ─── 5. Gera thumbnail 9:16 ───────────────────────────────
 def generate_thumbnail(video_title, category):
-    prompt = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["cozy"])
+    prompt = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["rain"])
     kw     = " ".join(w for w in video_title.lower().split() if len(w) > 3)[:60]
     prompt = f"{kw}, {prompt}"
     img    = None
@@ -476,13 +456,9 @@ def upload_short(title, category, video_id, thumb_path):
     yt = build("youtube", "v3", credentials=creds)
 
     hashtags = {
-        "rain":        "#nocturnoise #rainambience #shorts",
-        "cozy":        "#nocturnoise #cozyambience #shorts",
-        "nature":      "#nocturnoise #naturesounds #shorts",
-        "jazz":        "#nocturnoise #jazzambience #shorts",
-        "focus_noise": "#nocturnoise #brownnoise #shorts",
-        "study":       "#nocturnoise #studyambience #shorts",
-        "urban":       "#nocturnoise #cityambience #shorts",
+        "rain": "#nocturnoise #rainambience #shorts",
+        "jazz": "#nocturnoise #jazzambience #shorts",
+        "lofi": "#nocturnoise #lofibeats #shorts",
     }
 
     description = (
