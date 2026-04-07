@@ -56,7 +56,7 @@ def cleanup():
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--category", choices=["rain","nature","cozy","jazz","focus_noise","study","urban"])
+    p.add_argument("--category", choices=["rain", "jazz", "lofi"])
     p.add_argument("--duration", type=int, choices=[2,3,4])
     p.add_argument("--skip-upload", action="store_true")
     p.add_argument("--no-cleanup",  action="store_true")
