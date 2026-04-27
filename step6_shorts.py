@@ -7,15 +7,24 @@ Fluxo:
   1. YouTube API → pega último vídeo publicado (título, ID, categoria)
   2. yt-dlp      → baixa áudio do vídeo longo
   3. pydub       → corta melhor trecho de 55s + fade seamless
-  4. Groq        → gera título evocativo (máx 7 palavras)
-  5. AI cascade  → gera thumbnail 9:16 (IA ou Pexels)
+  4. AI cascade  → gera título evocativo ÚNICO (Groq → Mistral → Gemini)
+  5. AI cascade  → gera thumbnail 9:16 (IA ou Pexels) com prompt rotativo
   6. PIL         → escreve título na thumbnail com fade
   7. ffmpeg      → monta vídeo 1080x1920 com Ken Burns + fade de entrada/saída
   8. YouTube API → sobe como Short com link pro vídeo original
+
+FIXES v2:
+  - Title deduplication: used_short_titles.json prevents any title reuse within 30 days
+  - AI cascade for titles: Groq → Mistral → Gemini (was Groq-only)
+  - Enriched prompt with mood progression and anti-repetition constraints
+  - Expanded fallback titles: 5 → 15 per category (emotional arcs)
+  - Expanded image prompts: 1 → 8 per category with rotation tracking
+  - SEO keyword prefix on Short titles for discoverability
+  - Expanded tags: 8 → 15+ per category
 """
-import os, json, subprocess, random, re, base64, requests, shutil, textwrap
+import os, json, subprocess, random, re, base64, requests, shutil, textwrap, time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
@@ -25,6 +34,8 @@ load_dotenv()
 
 # ─── Config ───────────────────────────────────────────────
 GROQ_KEY     = os.environ.get("GROQ_API_KEY", "")
+MISTRAL_KEY  = os.environ.get("MISTRAL_API_KEY", "")
+GEMINI_KEY   = os.environ.get("GEMINI_API_KEY", "")
 TOGETHER_KEY = os.environ.get("TOGETHER_API_KEY", "")
 FAL_KEY      = os.environ.get("FAL_API_KEY", "")
 PEXELS_KEY   = os.environ.get("PEXELS_API_KEY", "")
@@ -37,6 +48,63 @@ SHORT_AUDIO      = Path("short_audio.mp3")
 SHORT_THUMB      = Path("short_thumb.jpg")    # thumbnail pura (sem texto)
 SHORT_FRAME      = Path("short_frame.jpg")    # thumbnail com título sobreposto
 
+# ─── Title Deduplication ──────────────────────────────────
+USED_SHORT_TITLES_FILE = "used_short_titles.json"
+TITLE_HISTORY_DAYS     = 30  # títulos ficam bloqueados por 30 dias
+
+def get_used_short_titles():
+    """Retorna lista de títulos usados nos últimos TITLE_HISTORY_DAYS dias."""
+    if not os.path.exists(USED_SHORT_TITLES_FILE):
+        return {}
+    try:
+        with open(USED_SHORT_TITLES_FILE) as f:
+            data = json.load(f)
+        # Limpa entradas antigas (> 30 dias)
+        cutoff = (datetime.now() - timedelta(days=TITLE_HISTORY_DAYS)).isoformat()
+        cleaned = {t: ts for t, ts in data.items() if ts > cutoff}
+        return cleaned
+    except Exception:
+        return {}
+
+def save_short_title(title):
+    """Salva título usado com timestamp."""
+    used = get_used_short_titles()
+    used[title.lower().strip()] = datetime.now().isoformat()
+    with open(USED_SHORT_TITLES_FILE, "w") as f:
+        json.dump(used, f, indent=2)
+
+def is_title_duplicate(title, used_titles):
+    """Verifica se o título é duplicado ou muito similar a algum já usado."""
+    normalized = title.lower().strip().rstrip(".")
+    for used in used_titles:
+        used_norm = used.lower().strip().rstrip(".")
+        # Exato
+        if normalized == used_norm:
+            return True
+        # Muito similar (80%+ das palavras iguais)
+        words_new  = set(normalized.split())
+        words_used = set(used_norm.split())
+        if len(words_new) > 0 and len(words_new & words_used) / max(len(words_new), 1) > 0.8:
+            return True
+    return False
+
+# ─── SEO Keyword Prefixes ─────────────────────────────────
+SHORT_SEO_KEYWORDS = {
+    "rain": [
+        "Rain Sounds", "Rain ASMR", "Rainy Night", "Storm Sounds",
+        "Rain for Sleep", "Thunder Sounds", "Window Rain",
+    ],
+    "jazz": [
+        "Late Night Jazz", "Jazz Piano", "Smooth Jazz", "Jazz Vibes",
+        "Jazz Music", "Midnight Jazz", "Jazz Ambience",
+    ],
+    "lofi": [
+        "Lofi Beats", "Lofi Chill", "Lofi Music", "Chill Beats",
+        "Lofi Vibes", "Lofi Hip Hop", "Study Beats",
+    ],
+}
+
+# ─── Expanded Image Prompts (8 per category) ─────────────
 STYLE_BASE = (
     "nocturne lofi illustration, portrait 9:16, intimate night scene, "
     "warm amber lamp glow, crescent moon and city skyline through large window, "
@@ -47,9 +115,125 @@ STYLE_BASE = (
 )
 
 CATEGORY_PROMPTS = {
-    "rain": f"rain drops on window glass at night, steaming coffee mug, warm desk lamp, city lights blurred through rain, {STYLE_BASE}",
-    "jazz": f"vinyl record spinning on turntable, warm amber light, jazz album covers on shelf, headphones, {STYLE_BASE}",
-    "lofi": f"cozy desk at night with headphones, lo-fi vinyl aesthetic, warm lamp glow, open notebook, city lights through window, {STYLE_BASE}",
+    "rain": [
+        f"rain drops on window glass at night, steaming coffee mug, warm desk lamp, city lights blurred through rain, {STYLE_BASE}",
+        f"heavy thunderstorm viewed from bedroom window, blanket on chair, candle flickering, bookshelves, {STYLE_BASE}",
+        f"rain on rooftop terrace at night, potted plants getting wet, warm interior light spilling out, {STYLE_BASE}",
+        f"car windshield covered in rain at night, dashboard glow, city neon reflections, parked on quiet street, {STYLE_BASE}",
+        f"rain falling on japanese garden at night, stone lantern, bamboo, misty atmosphere, warm window in background, {STYLE_BASE}",
+        f"cozy reading nook by rainy window, stack of books, warm blanket, fairy lights, tea cup, {STYLE_BASE}",
+        f"rain on cabin window in forest, fireplace glow, wool rug, wooden walls, {STYLE_BASE}",
+        f"puddles reflecting neon signs in rain, empty alley at night, warm cafe window nearby, {STYLE_BASE}",
+    ],
+    "jazz": [
+        f"vinyl record spinning on turntable, warm amber light, jazz album covers on shelf, headphones, {STYLE_BASE}",
+        f"grand piano in empty jazz club, single spotlight, whiskey glass on piano, art deco interior, {STYLE_BASE}",
+        f"saxophone resting on velvet chair, dim bar lighting, neon sign glow, glasses on counter, {STYLE_BASE}",
+        f"paris cafe at night with accordion, cobblestone street, warm cafe lights, empty tables, {STYLE_BASE}",
+        f"jazz musician silhouette behind frosted glass, warm interior, city lights outside, {STYLE_BASE}",
+        f"old radio playing jazz in dimly lit room, bookshelf, armchair, warm lamp, night window, {STYLE_BASE}",
+        f"rooftop jazz setup at dusk, trumpet and sheet music, city skyline, string lights, {STYLE_BASE}",
+        f"vintage jukebox glowing in corner of empty diner at night, rain outside, warm booth, {STYLE_BASE}",
+    ],
+    "lofi": [
+        f"cozy desk at night with headphones, lo-fi vinyl aesthetic, warm lamp glow, open notebook, city lights through window, {STYLE_BASE}",
+        f"cat sleeping on desk next to laptop, fairy lights, warm room, night city view, cassette tapes, {STYLE_BASE}",
+        f"rooftop at golden hour fading to dusk, headphones on railing, plants, sunset clouds, {STYLE_BASE}",
+        f"vintage cassette player on wooden desk, polaroid photos pinned to wall, warm amber tones, {STYLE_BASE}",
+        f"rainy window with desk lamp reflection, open sketchbook, colored pencils, coffee cup, {STYLE_BASE}",
+        f"balcony at night with string lights, small table with tea, city below, headphones, plants, {STYLE_BASE}",
+        f"train window at night, passing city lights, headphones on seat, warm interior, {STYLE_BASE}",
+        f"cozy floor setup with vinyl player, cushions, warm blanket, fairy lights, rainy night, {STYLE_BASE}",
+    ],
+}
+
+# Image prompt rotation tracking
+USED_SHORT_PROMPTS_FILE = "used_short_prompts.json"
+
+def get_rotated_prompt(category):
+    """Retorna um prompt de imagem que não foi usado recentemente."""
+    prompts = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["rain"])
+    used = []
+    if os.path.exists(USED_SHORT_PROMPTS_FILE):
+        try:
+            with open(USED_SHORT_PROMPTS_FILE) as f:
+                used = json.load(f).get(category, [])
+        except Exception:
+            used = []
+
+    # Filtra prompts não usados
+    available = [i for i in range(len(prompts)) if i not in used]
+    if not available:
+        # Reset cycle
+        available = list(range(len(prompts)))
+        used = []
+
+    chosen_idx = random.choice(available)
+    used.append(chosen_idx)
+
+    # Salva
+    all_used = {}
+    if os.path.exists(USED_SHORT_PROMPTS_FILE):
+        try:
+            with open(USED_SHORT_PROMPTS_FILE) as f:
+                all_used = json.load(f)
+        except Exception:
+            pass
+    all_used[category] = used
+    with open(USED_SHORT_PROMPTS_FILE, "w") as f:
+        json.dump(all_used, f, indent=2)
+
+    return prompts[chosen_idx]
+
+
+# ─── Expanded Fallback Titles (15 per category) ──────────
+EVOCATIVE_FALLBACKS = {
+    "rain": [
+        # Discovery
+        "still raining.", "you left the window open.", "it won't stop tonight.",
+        # Comfort
+        "the rain found you again.", "let it rain a little longer.",
+        "this rain feels like home.", "nowhere to be, just rain.",
+        # Nostalgia
+        "the same rain from that night.", "you remember this sound.",
+        "it rained like this once before.",
+        # Mystery
+        "the city disappears in rain.", "listen. just listen.",
+        "something about tonight.", "the storm knows your name.",
+        # Farewell
+        "one last storm before dawn.",
+    ],
+    "jazz": [
+        # Discovery
+        "one more song.", "the piano player stayed late.", "the bar is almost empty.",
+        # Comfort
+        "nobody's leaving yet.", "just the music now.",
+        "the last set before closing.", "somewhere a piano is playing.",
+        # Nostalgia
+        "this song played that night.", "you've heard this before.",
+        "the same jazz, different city.",
+        # Mystery
+        "who's still playing at 3am?", "the piano started on its own.",
+        "the bartender knows this song.", "smoke and slow keys.",
+        # Farewell
+        "the musician packed up slowly.",
+    ],
+    "lofi": [
+        # Discovery
+        "press play and disappear.", "the playlist never ends.",
+        "headphones on, world off.",
+        # Comfort
+        "one more beat.", "stay in the loop.",
+        "the coffee got cold hours ago.", "you forgot what time it is.",
+        # Nostalgia
+        "this beat feels familiar.", "somewhere you've been before.",
+        "the same playlist from that summer.",
+        # Mystery
+        "who made this beat?", "the algorithm found you.",
+        "3am and you're still here.", "the glow of one more screen.",
+        # Farewell
+        "last track before sleep.",
+    ],
 }
 
 
@@ -157,48 +341,156 @@ def cut_best_segment(audio_path):
     return str(SHORT_AUDIO)
 
 
-# ─── 4. Gera título evocativo via Groq ────────────────────
-EVOCATIVE_FALLBACKS = {
-    "rain": ["Still raining.", "You left the window open.", "It won't stop tonight.",
-             "The rain found you again.", "Let it rain a little longer."],
-    "jazz": ["One more song.", "The piano player stayed late.", "The bar is almost empty.",
-             "Nobody's leaving yet.", "Just the music now."],
-    "lofi": ["Press play and disappear.", "The playlist never ends.",
-             "Headphones on, world off.", "One more beat.", "Stay in the loop."],
+# ─── 4. Gera título evocativo via AI Cascade ─────────────
+# Mood progression for 7-day cycle — gives the AI creative direction
+MOOD_PROGRESSION = {
+    1: "discovery — the listener just found this sound for the first time",
+    2: "comfort — the listener is settling in, this feels familiar already",
+    3: "immersion — the listener is fully absorbed, lost in the sound",
+    4: "nostalgia — the sound reminds the listener of a specific moment",
+    5: "mystery — something about tonight feels different",
+    6: "intimacy — the sound feels personal, like it was made just for them",
+    7: "farewell — the last listen before something changes",
 }
 
-def generate_short_title(video_title, category):
+def _build_title_prompt(video_title, category, used_titles_list):
+    """Builds a rich, anti-repetition prompt for Short title generation."""
+    day_of_week = int(datetime.now().strftime("%u"))  # 1=Monday ... 7=Sunday
+    mood = MOOD_PROGRESSION.get(day_of_week, "mystery — something about tonight feels different")
+    fallbacks = EVOCATIVE_FALLBACKS.get(category, EVOCATIVE_FALLBACKS["rain"])
+
+    # Inject last 10 used titles to avoid repetition
+    avoid_section = ""
+    if used_titles_list:
+        recent = list(used_titles_list)[-10:]
+        avoid_section = "\n".join(f'  - "{t}"' for t in recent)
+        avoid_section = f"\n\nNEVER use these titles (already used recently):\n{avoid_section}\n"
+
+    example_titles = "\n  ".join(f'"{t}"' for t in random.sample(fallbacks, min(8, len(fallbacks))))
+
+    return f"""You are writing a YouTube Short title for the ambient channel "Nocturne Noise".
+
+Source video: "{video_title}"
+Category: {category}
+Today's mood: {mood}
+
+RULES:
+- Max 7 words, all lowercase, period at the end
+- Second person ("you") or atmospheric scene-setting
+- Evocative, cinematic, emotional — like a whisper, not a headline
+- NO hashtags, NO emojis, NO category name literally
+- Must feel UNIQUE — don't repeat patterns or structures from the examples
+- Let today's mood ({mood.split('—')[0].strip()}) subtly influence the tone
+{avoid_section}
+Example titles for inspiration (do NOT copy these, create something NEW):
+  {example_titles}
+
+Output ONLY the title string, nothing else."""
+
+
+def _call_groq_title(prompt):
     if not GROQ_KEY:
-        return random.choice(EVOCATIVE_FALLBACKS.get(category, ["The night is yours."]))
+        raise ValueError("GROQ_API_KEY not set")
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "llama-3.3-70b-versatile",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.95, "max_tokens": 30,
+        },
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip().strip('"')
+
+
+def _call_mistral_title(prompt):
+    if not MISTRAL_KEY:
+        raise ValueError("MISTRAL_API_KEY not set")
+    r = requests.post(
+        "https://api.mistral.ai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "mistral-small-latest",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.95, "max_tokens": 30,
+        },
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip().strip('"')
+
+
+def _call_gemini_title(prompt):
+    if not GEMINI_KEY:
+        raise ValueError("GEMINI_API_KEY not set")
     try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-            json={
-                "model":    "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content":
-                    f'Video: "{video_title}" | Category: {category}\n'
-                    f"Write 1 punchy, evocative Short title (max 5 words). Lowercase. "
-                    f"Use a second person 'hook' or atmospheric mystery. "
-                    f"Example: 'the rain found you again.' or 'stay a little longer.' "
-                    f"Output ONLY the title string."}],
-                "temperature": 0.9, "max_tokens": 25,
-            },
-            timeout=20,
+        from google import genai
+        client = genai.Client(api_key=GEMINI_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
         )
-        r.raise_for_status()
-        title = r.json()["choices"][0]["message"]["content"].strip().strip('"')
-        if 3 <= len(title) <= 60:
-            print(f"   Título: {title}")
-            return title
-    except Exception as e:
-        print(f"   Groq falhou: {e}")
-    return random.choice(EVOCATIVE_FALLBACKS.get(category, ["The night is yours."]))
+        return response.text.strip().strip('"')
+    except ImportError:
+        import google.generativeai as genai_old
+        genai_old.configure(api_key=GEMINI_KEY)
+        model = genai_old.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+        return response.text.strip().strip('"')
+
+
+TITLE_PROVIDERS = [
+    ("Groq",    _call_groq_title),
+    ("Mistral", _call_mistral_title),
+    ("Gemini",  _call_gemini_title),
+]
+
+
+def generate_short_title(video_title, category):
+    """Generates a unique, evocative Short title using AI cascade with deduplication."""
+    used_titles = get_used_short_titles()
+    used_titles_list = list(used_titles.keys())
+
+    prompt = _build_title_prompt(video_title, category, used_titles_list)
+
+    # Try each AI provider up to 2 times each
+    for name, fn in TITLE_PROVIDERS:
+        for attempt in range(2):
+            try:
+                print(f"   [{name}] Gerando título (tentativa {attempt+1})...")
+                title = fn(prompt)
+                # Validate
+                if len(title) < 3 or len(title) > 70:
+                    print(f"   [{name}] Título inválido (tamanho): '{title}'")
+                    continue
+                # Check for duplicates
+                if is_title_duplicate(title, used_titles_list):
+                    print(f"   [{name}] Título duplicado: '{title}' — tentando novamente")
+                    # Add explicit avoidance to prompt for retry
+                    prompt += f'\n\nDO NOT use: "{title}"'
+                    continue
+                print(f"   Título: {title}")
+                return title
+            except Exception as e:
+                print(f"   [{name}] Falhou: {e}")
+                break  # Move to next provider
+
+    # Fallback — pick from expanded list, avoiding duplicates
+    print("   Todos os providers falharam. Usando fallback criativo.")
+    fallbacks = EVOCATIVE_FALLBACKS.get(category, EVOCATIVE_FALLBACKS["rain"])
+    available = [t for t in fallbacks if not is_title_duplicate(t, used_titles_list)]
+    if not available:
+        available = fallbacks  # Reset if all used
+    title = random.choice(available)
+    print(f"   Título (fallback): {title}")
+    return title
 
 
 # ─── 5. Gera thumbnail 9:16 ───────────────────────────────
 def generate_thumbnail(video_title, category):
-    prompt = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["rain"])
+    prompt = get_rotated_prompt(category)
     kw     = " ".join(w for w in video_title.lower().split() if len(w) > 3)[:60]
     prompt = f"{kw}, {prompt}"
     img    = None
@@ -436,6 +728,36 @@ def render_with_ffmpeg(frame_path, audio_path, duration_s=59):
 
 
 # ─── 8. Upload como Short ─────────────────────────────────
+# Expanded tags per category for better Shorts discovery
+SHORT_TAGS = {
+    "rain": [
+        "shorts", "nocturne noise", "rain sounds", "rain asmr", "rain for sleep",
+        "rainy night", "thunderstorm", "storm sounds", "window rain",
+        "ambient", "sleep sounds", "asmr no talking", "relaxing",
+        "rain ambience", "white noise",
+    ],
+    "jazz": [
+        "shorts", "nocturne noise", "jazz", "smooth jazz", "jazz piano",
+        "late night jazz", "jazz music", "instrumental jazz", "jazz ambience",
+        "midnight jazz", "jazz cafe", "relaxing jazz", "jazz vibes",
+        "background jazz", "jazz for studying",
+    ],
+    "lofi": [
+        "shorts", "nocturne noise", "lofi", "lofi beats", "lofi hip hop",
+        "chill beats", "lofi music", "study beats", "lofi chill",
+        "lofi vibes", "anime lofi", "lofi radio", "relaxing beats",
+        "lofi for studying", "chill lofi",
+    ],
+}
+
+# Category-specific hashtags for Shorts (optimized for discovery)
+SHORT_HASHTAGS = {
+    "rain": "#nocturnoise #rainsounds #rainasmr #sleepsounds #asmr #shorts",
+    "jazz": "#nocturnoise #jazz #smoothjazz #jazzpiano #jazzmusic #shorts",
+    "lofi": "#nocturnoise #lofi #lofibeats #lofihiphop #chillbeats #shorts",
+}
+
+
 def upload_short(title, category, video_id, thumb_path):
     import google.oauth2.credentials as goc
     from googleapiclient.discovery import build
@@ -455,31 +777,36 @@ def upload_short(title, category, video_id, thumb_path):
 
     yt = build("youtube", "v3", credentials=creds)
 
-    hashtags = {
-        "rain": "#nocturnoise #rainambience #shorts",
-        "jazz": "#nocturnoise #jazzambience #shorts",
-        "lofi": "#nocturnoise #lofibeats #shorts",
-    }
+    hashtags = SHORT_HASHTAGS.get(category, "#nocturnoise #shorts")
+
+    # SEO keyword prefix for discoverability
+    seo_keyword = random.choice(SHORT_SEO_KEYWORDS.get(category, ["Ambient Sounds"]))
+
+    # Build the upload title: "SEO Keyword • evocative hook #shorts"
+    upload_title = f"{seo_keyword} • {title} #shorts"
+    if len(upload_title) > 100:
+        upload_title = f"{title} #shorts"
 
     description = (
         f"{title}\n\n"
         f"🎧 Full version → https://www.youtube.com/watch?v={video_id}\n\n"
         f"Nocturne Noise — sounds for wherever you want to be.\n"
         f"Subscribe → https://www.youtube.com/@NocturneNoiseYT\n\n"
-        f"{hashtags.get(category, '#nocturnoise #shorts')}"
+        f"{hashtags}"
     )
 
-    print(f"   Upload: {title} #shorts")
+    tags = SHORT_TAGS.get(category, SHORT_TAGS["rain"])
+
+    print(f"   Upload: {upload_title}")
     media = MediaFileUpload(str(SHORT_OUTPUT), mimetype="video/mp4", resumable=True)
 
     request = yt.videos().insert(
         part="snippet,status",
         body={
             "snippet": {
-                "title":           f"{title} #shorts",
+                "title":           upload_title,
                 "description":     description,
-                "tags":            ["shorts", "nocturne noise", "soundscape", category,
-                                    "ambient", "lofi", "sleep sounds", "relaxing"],
+                "tags":            tags,
                 "categoryId":      "10",
                 "defaultLanguage": "en",
             },
@@ -511,7 +838,10 @@ def upload_short(title, category, video_id, thumb_path):
             print(f"   Thumbnail falhou (não crítico): {e}")
 
     with open("last_short.json", "w") as f:
-        json.dump({"id": short_id, "url": short_url, "title": title}, f, indent=2)
+        json.dump({"id": short_id, "url": short_url, "title": upload_title}, f, indent=2)
+
+    # Save to deduplication history
+    save_short_title(title)
 
     return short_url
 
@@ -542,10 +872,10 @@ def main():
         try: os.remove(raw_audio)
         except: pass
 
-    print("\n[4/7] Gerando título evocativo...")
+    print("\n[4/7] Gerando título evocativo ÚNICO...")
     short_title = generate_short_title(video_title, category)
 
-    print("\n[5/7] Gerando thumbnail 9:16...")
+    print("\n[5/7] Gerando thumbnail 9:16 (prompt rotativo)...")
     thumb_path = generate_thumbnail(video_title, category)
 
     print("\n[6/7] Montando frame com título + renderizando com ffmpeg...")
