@@ -9,6 +9,11 @@ Ordem:
   4. Stable Horde         (crowdsourced, gratis)
   5. Pollinations         (sem key, gratuito)
   6. Pexels / Pixabay     (foto real, fallback final)
+
+FIXES v2:
+  - Expanded CATEGORY_PROMPTS: 5 → 10+ per category (visual variety)
+  - Prompt rotation tracking via used_image_prompts.json
+  - No consecutive reuse of the same visual scene
 """
 import os, json, glob, time, requests, urllib.parse, random, base64
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
@@ -39,23 +44,17 @@ STYLE_BASE = (
 
 CATEGORY_PROMPTS = {
     "rain": [
-        f"rain drops on window glass, cozy desk with steaming coffee mug, vinyl record player, open notebook, warm desk lamp, {STYLE_BASE}",
+        f"rain drops on window glass, warm desk with steaming coffee mug, vinyl record player, open notebook, desk lamp, {STYLE_BASE}",
         f"heavy rain outside window at night, reading under blanket, candle light, bookshelf, plants, {STYLE_BASE}",
-        f"rain on rooftop terrace, city lights blurred through rain, cozy indoor corner, tea cup, {STYLE_BASE}",
-        f"rainy night street lamp reflection on wet pavement, viewed from cozy window, hot drink, {STYLE_BASE}",
-    ],
-    "nature": [
-        f"misty forest at dawn through large window, wooden desk, fern plant, soft morning light, {STYLE_BASE}",
-        f"ocean waves visible through floor-to-ceiling window, cozy reading chair, lighthouse in distance, {STYLE_BASE}",
-        f"mountain stream and pine forest outside window, log cabin interior, fireplace glow, {STYLE_BASE}",
-        f"bamboo forest swaying gently, japanese-inspired interior, tea ceremony set, zen atmosphere, {STYLE_BASE}",
-    ],
-    "cozy": [
-        f"vintage coffee shop interior at night, exposed brick, warm Edison bulbs, vinyl records on wall, coffee and croissant, {STYLE_BASE}",
-        f"crackling fireplace close-up, armchair with blanket, open book, cup of tea, cat sleeping, {STYLE_BASE}",
-        f"old library with floor-to-ceiling bookshelves, reading nook, vintage lamp, stacked books, {STYLE_BASE}",
-        f"cozy cabin in snowstorm, fireplace, hot cocoa with marshmallows, frost on window, pine trees outside, {STYLE_BASE}",
-        f"japanese tea house at night, paper lanterns, wooden table, matcha tea, bonsai plant, {STYLE_BASE}",
+        f"rain on rooftop terrace, city lights blurred through rain, indoor corner with tea cup, {STYLE_BASE}",
+        f"rainy night street lamp reflection on wet pavement, viewed from window, hot drink, {STYLE_BASE}",
+        f"lightning storm visible through large window, dark room, single lamp glow, {STYLE_BASE}",
+        f"rain on cabin window in forest at night, fireplace glow visible, wool rug, wooden interior, {STYLE_BASE}",
+        f"rain falling on japanese zen garden, stone lantern, bamboo, mist, warm window behind, {STYLE_BASE}",
+        f"car parked in rain at night, dashboard glow, city neon reflections on wet glass, quiet street, {STYLE_BASE}",
+        f"rain on library window, reading lamp, stacked books, leather armchair, warm golden tones, {STYLE_BASE}",
+        f"puddles reflecting city neon signs in heavy rain, empty alley, warm cafe glow nearby, {STYLE_BASE}",
+        f"rain on train window at night, passing city lights blurred, warm interior seat, {STYLE_BASE}",
     ],
     "jazz": [
         f"jazz musician silhouette at grand piano, late night bar, neon sign glow, saxophone on stand, {STYLE_BASE}",
@@ -63,26 +62,65 @@ CATEGORY_PROMPTS = {
         f"paris sidewalk cafe at night, accordion player, warm cafe lights, cobblestone street, {STYLE_BASE}",
         f"vinyl record spinning on turntable, warm amber light, bookshelf with jazz albums, headphones, {STYLE_BASE}",
         f"bossa nova beach bar at dusk, acoustic guitar, tropical plants, fairy lights, ocean in background, {STYLE_BASE}",
+        f"old radio playing in dimly lit study, leather armchair, whiskey glass, warm lamp, bookshelves, {STYLE_BASE}",
+        f"saxophone resting on velvet chair in empty jazz bar, single spotlight, art deco mirrors, {STYLE_BASE}",
+        f"rooftop jazz setup at twilight, trumpet and sheet music on stand, city skyline, string lights, {STYLE_BASE}",
+        f"vintage jukebox glowing in corner of empty diner at night, rain outside, warm booth seats, {STYLE_BASE}",
+        f"piano keys close-up with warm amber side lighting, jazz club atmosphere, smoke wisps, {STYLE_BASE}",
+        f"new orleans style balcony at night, warm lamp, jazz posters on wall, trumpet case, {STYLE_BASE}",
     ],
-    "focus_noise": [
-        f"minimalist home office at night, single desk lamp, open notebook, pencils, plant, clean aesthetic, {STYLE_BASE}",
-        f"student desk late at night, glowing monitor, coffee cup, notes scattered, city view through window, {STYLE_BASE}",
-        f"zen meditation corner, candle, cushion, soft light through curtain, {STYLE_BASE}",
-        f"cozy bedroom at night, moonlight through window, peaceful, minimal decor, {STYLE_BASE}",
-    ],
-    "study": [
-        f"late night study session, desk with open books and laptop, coffee, desk lamp, rain on window, {STYLE_BASE}",
-        f"university library at night, long wooden table, stacked books, warm reading lamps, {STYLE_BASE}",
-        f"bedroom desk study corner, fairy lights, sticky notes, textbooks, plant, {STYLE_BASE}",
-        f"coffee shop study session at night, laptop, coffee, rainy window, cozy crowd, {STYLE_BASE}",
-    ],
-    "urban": [
-        f"tokyo street at night in rain, neon signs reflected on wet streets, ramen shop glow, {STYLE_BASE}",
-        f"paris rooftop at night, eiffel tower in distance, wine glass, fairy lights, warm bistro interior, {STYLE_BASE}",
-        f"new york apartment window at night, manhattan skyline, rain on glass, interior lamp, {STYLE_BASE}",
-        f"london rainy evening, red phone box, cobblestone street, pub warm light, fog, {STYLE_BASE}",
+    "lofi": [
+        f"cozy bedroom desk at night, anime-style lofi aesthetic, headphones, glowing monitor, city lights through window, {STYLE_BASE}",
+        f"late night study desk with lofi vinyl record, warm lamp, open notebook, coffee cup, rain outside, {STYLE_BASE}",
+        f"lo-fi inspired rooftop at dusk, golden hour fading, headphones resting on railing, plants, {STYLE_BASE}",
+        f"vintage cassette player on desk, fairy lights, cat sleeping nearby, warm amber tones, {STYLE_BASE}",
+        f"morning window with soft sunlight, lofi aesthetic, tea cup, journal, vinyl record sleeve, {STYLE_BASE}",
+        f"balcony at night with string lights and small table, tea cup, city below, headphones, plants, {STYLE_BASE}",
+        f"train window at night passing city lights, headphones on seat, warm interior glow, {STYLE_BASE}",
+        f"cozy floor setup with vinyl player on rug, cushions, warm blanket, fairy lights, rainy night window, {STYLE_BASE}",
+        f"cat sleeping on desk next to laptop and headphones, fairy lights, warm room, night city view, {STYLE_BASE}",
+        f"rainy window reflection with desk lamp, open sketchbook, colored pencils, cold coffee cup, {STYLE_BASE}",
+        f"bookstore corner at night, reading lamp, stacked vinyl records, warm amber tones, headphones, {STYLE_BASE}",
     ],
 }
+
+# ══════════════════════════════════════════════════════════
+# IMAGE PROMPT ROTATION — prevents consecutive reuse
+# ══════════════════════════════════════════════════════════
+USED_IMAGE_PROMPTS_FILE = "used_image_prompts.json"
+
+def get_rotated_image_prompt(category):
+    """Returns an image prompt that hasn't been used recently, tracking rotation."""
+    prompts = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["rain"])
+    used = []
+    if os.path.exists(USED_IMAGE_PROMPTS_FILE):
+        try:
+            with open(USED_IMAGE_PROMPTS_FILE) as f:
+                used = json.load(f).get(category, [])
+        except Exception:
+            used = []
+
+    available = [i for i in range(len(prompts)) if i not in used]
+    if not available:
+        available = list(range(len(prompts)))
+        used = []
+
+    chosen_idx = random.choice(available)
+    used.append(chosen_idx)
+
+    all_used = {}
+    if os.path.exists(USED_IMAGE_PROMPTS_FILE):
+        try:
+            with open(USED_IMAGE_PROMPTS_FILE) as f:
+                all_used = json.load(f)
+        except Exception:
+            pass
+    all_used[category] = used
+    with open(USED_IMAGE_PROMPTS_FILE, "w") as f:
+        json.dump(all_used, f, indent=2)
+
+    print(f"   Prompt #{chosen_idx+1}/{len(prompts)} (rotação)")
+    return prompts[chosen_idx]
 
 
 def retry(fn, name, *args, retries=MAX_RETRIES, **kwargs):
@@ -419,7 +457,7 @@ def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg", metadata_durati
 # CASCADE — 6 fontes, 3 tentativas cada
 # ══════════════════════════════════════════════════════════
 def get_image(category, pexels_query):
-    prompt = random.choice(CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["cozy"]))
+    prompt = get_rotated_image_prompt(category)
 
     ai_sources = [
         ("Together AI FLUX.1", _together),
@@ -462,9 +500,9 @@ def main():
     with open(meta_files[0]) as f:
         metadata = json.load(f)
 
-    category   = metadata.get("category", "cozy")
+    category   = metadata.get("category", "rain")
     thumb_text = metadata.get("thumbnail_text", "Nocturne Noise")
-    pexels_q   = metadata.get("theme_data", {}).get("pexels", metadata.get("theme", "cozy ambience"))
+    pexels_q   = metadata.get("theme_data", {}).get("pexels", metadata.get("theme", "rain ambience"))
 
     print(f"\nGerando imagem: {category}")
     print(f"Thumbnail: {thumb_text}")
