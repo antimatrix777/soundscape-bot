@@ -7,14 +7,18 @@ SEO STRATEGY: Hybrid titles — keyword cluster FIRST for search discoverability
 cinematic line SECOND for brand identity and CTR.
 Formula: "[SEO Keyword] • [Cinematic Line]"
 
-FIXES vs previous version:
-  - Title separator unified: prompt now correctly uses • (bullet) to match
-    FALLBACK_TITLES format — was using | (pipe) causing branding inconsistency
-  - mark_theme_used: reset now saves [] instead of [theme_name], preventing
-    the last used theme from being immediately re-picked after a full cycle
+FIXES v2:
+  - Title separator unified: prompt now correctly uses • (bullet)
+  - mark_theme_used: reset now saves [] instead of [theme_name]
+  - Expanded KEYWORD_CLUSTERS: 5-6 → 12+ per category (long-tail SEO)
+  - Expanded FALLBACK_TITLES: 5-6 → 12+ per category (emotional variety)
+  - Used title tracking: used_titles_long.json prevents title reuse
+  - AI prompt injects recent titles to avoid repetition
+  - Description structure optimized: CTA visible in first 3 lines
+  - USE_CASE_TAGS expanded with trending search terms
 """
 import json, os, random, argparse, re
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -57,7 +61,7 @@ THEMES = {
 }
 
 # ─────────────────────────────────────────────────────────
-# SEO KEYWORD CLUSTERS
+# SEO KEYWORD CLUSTERS (expanded with long-tail keywords)
 # ─────────────────────────────────────────────────────────
 KEYWORD_CLUSTERS = {
     "rain": [
@@ -67,6 +71,12 @@ KEYWORD_CLUSTERS = {
         "Rain Sounds",
         "Relaxing Rain",
         "Thunderstorm Sounds",
+        "Rain and Thunder",
+        "ASMR Rain",
+        "Window Rain at Night",
+        "Rain for Anxiety Relief",
+        "Rain Sounds No Music",
+        "Gentle Rain for Studying",
     ],
     "jazz": [
         "Late Night Jazz",
@@ -74,6 +84,13 @@ KEYWORD_CLUSTERS = {
         "Jazz Piano",
         "Jazz for Studying",
         "Relaxing Jazz Music",
+        "Jazz Piano Bar",
+        "Midnight Jazz",
+        "Jazz for Reading",
+        "Instrumental Jazz Cafe",
+        "Jazz Club Ambience",
+        "Bossa Nova Instrumental",
+        "Jazz for Working",
     ],
     "lofi": [
         "Lofi Beats",
@@ -81,19 +98,32 @@ KEYWORD_CLUSTERS = {
         "Lofi Music for Studying",
         "Chill Lofi Beats",
         "Lofi Chill Music",
+        "Lofi Radio",
+        "Afternoon Lofi",
+        "Lofi Rain",
+        "Lofi for Working",
+        "Lofi Beats to Sleep",
+        "Anime Lofi Beats",
+        "Lofi Jazz Hop",
     ],
 }
 
 USE_CASE_TAGS = {
     "rain":  ["rain sounds for sleep", "rain for studying", "rain to fall asleep",
               "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours",
-              "thunderstorm sounds for sleep", "thunder and rain"],
+              "thunderstorm sounds for sleep", "thunder and rain",
+              "asmr rain no talking", "rain sounds no music", "window rain",
+              "heavy rain for sleep", "rain for babies"],
     "jazz":  ["jazz for studying", "jazz for working", "jazz for sleep",
               "jazz background music", "jazz focus music", "jazz 2 hours",
-              "jazz 3 hours", "smooth jazz for studying"],
+              "jazz 3 hours", "smooth jazz for studying",
+              "jazz piano for relaxation", "jazz cafe music",
+              "instrumental jazz for working", "bossa nova for studying"],
     "lofi":  ["lofi for studying", "lofi for sleep", "lofi beats to relax",
               "lofi hip hop study", "lofi chill beats", "lofi 2 hours",
-              "lofi 3 hours", "lofi music for work"],
+              "lofi 3 hours", "lofi music for work",
+              "lofi radio", "anime lofi", "lofi rain",
+              "chill beats for homework", "lofi for reading"],
 }
 
 # ─────────────────────────────────────────────────────────
@@ -116,8 +146,6 @@ def get_series_number(category):
 
 # ─────────────────────────────────────────────────────────
 # USED THEMES TRACKER
-# FIX: reset now saves [] instead of [theme_name] — prevents the last
-#      used theme from being immediately excluded on the next full cycle
 # ─────────────────────────────────────────────────────────
 USED_THEMES_FILE = "used_themes.json"
 
@@ -134,13 +162,35 @@ def mark_theme_used(theme_name):
     used = get_used_themes()
     all_themes = [t["theme"] for cat in THEMES.values() for t in cat]
     used.append(theme_name)
-    # FIX: was `used = [theme_name]` — kept the just-used theme as the only
-    # "used" entry, meaning it could be re-picked immediately after reset.
-    # Correct behavior: clear fully so all themes are available next cycle.
     if len(used) >= len(all_themes):
         used = []
     with open(USED_THEMES_FILE, "w") as f:
         json.dump(used, f)
+
+# ─────────────────────────────────────────────────────────
+# USED LONG VIDEO TITLES TRACKER
+# Prevents AI from generating the same or very similar titles
+# ─────────────────────────────────────────────────────────
+USED_TITLES_LONG_FILE = "used_titles_long.json"
+
+def get_used_long_titles():
+    """Returns dict of {title: timestamp} for titles used in the last 90 days."""
+    if not os.path.exists(USED_TITLES_LONG_FILE):
+        return {}
+    try:
+        with open(USED_TITLES_LONG_FILE) as f:
+            data = json.load(f)
+        cutoff = (datetime.now() - timedelta(days=90)).isoformat()
+        return {t: ts for t, ts in data.items() if ts > cutoff}
+    except Exception:
+        return {}
+
+def save_long_title(title):
+    """Saves a used title with timestamp."""
+    used = get_used_long_titles()
+    used[title.lower().strip()] = datetime.now().isoformat()
+    with open(USED_TITLES_LONG_FILE, "w") as f:
+        json.dump(used, f, indent=2)
 
 # ─────────────────────────────────────────────────────────
 # HASHTAGS PER CATEGORY
@@ -152,30 +202,69 @@ CATEGORY_HASHTAGS = {
 }
 
 # ─────────────────────────────────────────────────────────
-# CREATIVE FALLBACK TITLES
+# CREATIVE FALLBACK TITLES (expanded from 5-6 to 12+ per category)
+# Organized by emotional arcs: discovery, comfort, nostalgia, mystery, farewell
 # ─────────────────────────────────────────────────────────
 FALLBACK_TITLES = {
     "rain": [
+        # Discovery
         "Rain Sounds for Sleep • It Won't Stop Raining and That's Perfect",
         "Heavy Rain Sounds • You Forgot to Close the Window",
         "Rainy Night Ambience • The Rain Started While You Were Reading",
+        # Comfort
         "Rain Sounds • A Quiet Night with Nothing to Worry About",
         "Relaxing Rain • It's Been Raining Since This Morning",
+        "Rain and Thunder • The Kind of Rain You Fall Asleep To",
+        "Window Rain at Night • You're Warm and the World Is Wet",
+        # Nostalgia
+        "Rain Sounds for Sleep • The Same Rain from That December",
+        "ASMR Rain • You've Heard This Rain Before",
+        # Mystery
         "Thunderstorm Sounds • The Storm Arrived Without Warning",
+        "Heavy Rain Sounds • The City Disappeared Hours Ago",
+        "Rain for Anxiety Relief • Let It All Wash Away Tonight",
+        # Farewell
+        "Gentle Rain for Studying • One Last Storm Before Morning",
     ],
     "jazz": [
+        # Discovery
         "Late Night Jazz • For Nobody in Particular",
         "Jazz Piano • The Last Set of the Night",
         "Smooth Jazz • The Piano Player Stayed After Closing",
+        # Comfort
         "Jazz for Studying • A Jazz Bar Somewhere in Paris",
         "Relaxing Jazz Music • One More Song Before We Go",
+        "Jazz Club Ambience • The Kind of Place You Keep Coming Back To",
+        "Instrumental Jazz Cafe • Somewhere Between Coffee and Midnight",
+        # Nostalgia
+        "Jazz Piano Bar • This Song Played the Night You Met",
+        "Midnight Jazz • The Same Record, Different City",
+        # Mystery
+        "Bossa Nova Instrumental • Who's Still Playing at This Hour",
+        "Jazz for Reading • The Bartender Knows Your Order Already",
+        "Late Night Jazz • Smoke, Slow Keys, and Nobody Watching",
+        # Farewell
+        "Jazz for Working • The Musician Packed Up and Left the Key",
     ],
     "lofi": [
+        # Discovery
         "Lofi Beats • The Playlist That Never Ends",
         "Lofi Hip Hop • Late Night, Headphones On",
         "Chill Lofi Beats • You Pressed Play and Forgot the World",
+        # Comfort
         "Lofi Music for Studying • The Coffee Got Cold Hours Ago",
         "Lofi Chill Music • Sunday Morning, No Plans",
+        "Lofi Radio • You've Been Here All Night and That's Okay",
+        "Lofi for Working • The Kind of Beat That Keeps You Going",
+        # Nostalgia
+        "Lofi Beats to Sleep • The Same Playlist from Last Summer",
+        "Lofi Rain • This Beat Sounds Like a Memory",
+        # Mystery
+        "Anime Lofi Beats • The Algorithm Brought You Here",
+        "Lofi Jazz Hop • Who Made This and Why Is It Perfect",
+        "Afternoon Lofi • 3AM and You're Still Pressing Replay",
+        # Farewell
+        "Lofi Beats • Last Track Before the Sun Comes Up",
     ],
 }
 
@@ -206,11 +295,20 @@ def build_prompt(theme_data, category, duration_hours, series_num):
     kw_clusters = KEYWORD_CLUSTERS.get(category, ["Relaxing Sounds"])
     kw_examples = "\n  ".join(kw_clusters)
     use_cases   = USE_CASE_TAGS.get(category, [])
-    use_case_ex = ", ".join(use_cases[:4])
+    use_case_ex = ", ".join(use_cases[:5])
 
-    # FIX: separator is now • (bullet) in the prompt, matching FALLBACK_TITLES.
-    # Previous version used | (pipe) here but • everywhere else — inconsistency
-    # caused the AI to use | while fallback titles used •, breaking visual branding.
+    # Anti-repetition: inject recent titles
+    used_titles = get_used_long_titles()
+    avoid_section = ""
+    if used_titles:
+        recent = list(used_titles.keys())[-8:]
+        avoid_lines = "\n  ".join(f'- "{t}"' for t in recent)
+        avoid_section = f"""
+
+--- AVOID THESE (recently used titles — do NOT reuse or create similar ones) ---
+  {avoid_lines}
+"""
+
     return f"""Generate YouTube metadata for the Nocturne Noise ambient channel.
 
 Theme: "{theme_data['theme']}"
@@ -233,6 +331,7 @@ Cinematic line rules:
 - Short, evocative, scene-setting - like a story in one line
 - Intimate, second person when possible
 - Specific moment, not a product category
+- MUST be UNIQUE — create something that has never been used before
 
 Good full title examples:
   "Rain Sounds for Sleep • You Forgot to Close the Window"
@@ -241,25 +340,29 @@ Good full title examples:
   "Brown Noise for Focus • Block Everything Out"
   "Forest Sounds • Somewhere Far from Everything"
   "Tokyo Night Ambience • 3AM and the City Is Still Breathing"
+  "Lofi Beats • The Playlist That Outlasted the Night"
+  "Thunderstorm Sounds • The Sky Cracked Open and You Stayed"
+  "Smooth Jazz • The Bartender Already Knows Your Order"
 
 Bad title examples:
   "A quiet corner of the jazz club long after everyone's gone" (no SEO keyword)
   "RELAXING RAIN SOUNDS 3 HOURS" (no identity)
   "Heavy Rain Ambience for Sleep" (no cinematic hook)
   "Rain Sounds | You Forgot to Close the Window" (wrong separator — must use •, not |)
-
+{avoid_section}
 --- DESCRIPTION RULES ---
 Total: 500-700 chars.
 
-IMPORTANT: The description is a single JSON string. Use \\n for line breaks, never raw newlines.
+IMPORTANT: The description is a single JSON string. Use \\\\n for line breaks, never raw newlines.
 
 Structure (in this exact order):
 1. HOOK (2 sentences): Second-person cinematic sentences placing the listener in the scene. Example: "You opened the window a few minutes ago. The rain started softly. Now it won't stop, and you don't want it to."
-2. USE-CASE LINE: "Perfect for: studying, working, falling asleep, unwinding after a long day."
-3. KEYWORD LINE: Natural sentence with duration and theme. Example: "{duration_hours} hours of uninterrupted {theme_data['theme']}."
-4. TIMESTAMPS: "0:00 Intro\\n0:30 {theme_data['theme'].title()}\\n[end time] Fade out"
-5. CTA: "New sounds twice a week: https://www.youtube.com/@NocturneNoise"
-6. HASHTAGS: {hashtags}
+2. CTA LINE: "🔔 New sounds twice a week — subscribe → https://www.youtube.com/@NocturneNoise"
+3. USE-CASE LINE: "Perfect for: studying, working, falling asleep, unwinding after a long day."
+4. KEYWORD LINE: Natural sentence with duration and theme. Example: "{duration_hours} hours of uninterrupted {theme_data['theme']}."
+5. TIMESTAMPS: "0:00 Intro\\\\n0:30 {theme_data['theme'].title()}\\\\n[end time] Fade out"
+6. SOCIAL PROOF: "👍 If this helped you, leave a like — it really helps the channel grow."
+7. HASHTAGS: {hashtags}
 
 --- TAGS RULES ---
 Generate exactly 25 tags as a JSON array of strings.
@@ -268,6 +371,7 @@ Generate exactly 25 tags as a JSON array of strings.
 - MUST include at least 2 duration-based tags: "{duration_hours} hour {category}", "{duration_hours} hours of {theme_data['theme'].split()[0]}", etc.
 - MUST include use-case tags like: {use_case_ex}
 - MUST include "nocturne noise" as one tag
+- MUST include at least 2 trending search terms: "asmr no talking", "sounds for babies", "study with me"
 - Mix: exact match, broad, long-tail
 
 --- THUMBNAIL TEXT RULES ---
@@ -352,7 +456,7 @@ def call_groq(prompt):
         json={"model": "llama-3.3-70b-versatile",
               "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                            {"role": "user", "content": prompt}],
-              "temperature": 0.7, "max_tokens": 1200},
+              "temperature": 0.8, "max_tokens": 1200},
         timeout=30,
     )
     r.raise_for_status()
@@ -369,7 +473,7 @@ def call_mistral(prompt):
         json={"model": "mistral-small-latest",
               "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                            {"role": "user", "content": prompt}],
-              "temperature": 0.7, "max_tokens": 1200},
+              "temperature": 0.8, "max_tokens": 1200},
         timeout=30,
     )
     r.raise_for_status()
@@ -422,10 +526,16 @@ def call_ai_cascade(prompt):
 def build_fallback_metadata(theme_data, category, duration_hours, series_num):
     dur      = f"{duration_hours} Hours"
     titles   = FALLBACK_TITLES.get(category, ["Relaxing Sounds • A Quiet Place to Rest"])
-    title    = random.choice(titles)
     hashtags = CATEGORY_HASHTAGS[category]
     kw       = random.choice(KEYWORD_CLUSTERS.get(category, ["Relaxing Sounds"]))
     use_tags = USE_CASE_TAGS.get(category, [])
+
+    # Pick a title that hasn't been used recently
+    used_titles = get_used_long_titles()
+    available = [t for t in titles if t.lower().strip() not in used_titles]
+    if not available:
+        available = titles  # Reset if all used
+    title = random.choice(available)
 
     base_tags = [
         "relaxing sounds", "sleep sounds", "ambient music",
@@ -435,6 +545,7 @@ def build_fallback_metadata(theme_data, category, duration_hours, series_num):
         "work from home", "deep focus", "concentration",
         "peaceful", "relax", "ambient noise", "nocturne noise",
         f"{duration_hours} hour ambient", f"{duration_hours} hours relaxing",
+        "asmr no talking",
     ]
     all_tags = list(dict.fromkeys(use_tags[:6] + base_tags))[:25]
 
@@ -443,12 +554,12 @@ def build_fallback_metadata(theme_data, category, duration_hours, series_num):
         "description": (
             f"Close the door, put this on, and let everything else disappear.\n"
             f"{duration_hours} hours of {theme_data['theme']}. No interruptions.\n\n"
+            f"🔔 New sounds twice a week — subscribe → https://www.youtube.com/@NocturneNoise\n\n"
             f"🎧 Perfect for: studying, working, falling asleep, unwinding.\n"
             f"{duration_hours} hours of uninterrupted {theme_data['theme']}.\n\n"
             f"0:00 Intro\n0:30 {theme_data['theme'].title()}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👍 If this helped, leave a like — it really helps.\n"
-            f"🔔 New sounds twice a week → https://www.youtube.com/@NocturneNoise\n"
+            f"👍 If this helped, leave a like — it really helps the channel grow.\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{hashtags}"
         ),
@@ -510,6 +621,9 @@ def generate_metadata(theme_override=None, duration_hours=None, category=None):
     metadata["generated_at"]   = datetime.now().isoformat()
 
     mark_theme_used(theme_data["theme"])
+
+    # Save title to deduplication history
+    save_long_title(metadata.get("title", ""))
 
     fname = f"metadata_{theme_data['theme'][:30].replace(' ','_')}.json"
     with open(fname, "w", encoding="utf-8") as f:
