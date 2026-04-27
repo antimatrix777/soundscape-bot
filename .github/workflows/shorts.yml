@@ -8,7 +8,7 @@ on:
       skip_upload:
         description: 'Skip YouTube upload (test only)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
@@ -83,6 +83,7 @@ jobs:
       - name: Generate and upload Short
         env:
           GROQ_API_KEY:     ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY:  ${{ secrets.MISTRAL_API_KEY }}
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
           FAL_API_KEY:      ${{ secrets.FAL_API_KEY }}
           GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
