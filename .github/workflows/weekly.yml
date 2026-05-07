@@ -62,12 +62,12 @@ jobs:
           GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}
           FREESOUND_API_KEY:        ${{ secrets.FREESOUND_API_KEY }}
           PIXABAY_API_KEY:          ${{ secrets.PIXABAY_API_KEY }}
-          JAMENDO_CLIENT_ID:        ${{ secrets.JAMENDO_CLIENT_ID }}
           PEXELS_API_KEY:           ${{ secrets.PEXELS_API_KEY }}
           YT_TOKEN_B64:             ${{ secrets.YT_TOKEN_B64 }}
           PLAYLIST_RAIN:            ${{ secrets.PLAYLIST_RAIN }}
           PLAYLIST_JAZZ:            ${{ secrets.PLAYLIST_JAZZ }}
           PLAYLIST_LOFI:            ${{ secrets.PLAYLIST_LOFI }}
+          AUDIO_LICENSE_MODE:        cc0_only
           YT_PRIVACY_STATUS:         public
         run: python run_pipeline.py
 
