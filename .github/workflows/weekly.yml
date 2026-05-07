@@ -68,6 +68,7 @@ jobs:
           PLAYLIST_RAIN:            ${{ secrets.PLAYLIST_RAIN }}
           PLAYLIST_JAZZ:            ${{ secrets.PLAYLIST_JAZZ }}
           PLAYLIST_LOFI:            ${{ secrets.PLAYLIST_LOFI }}
+          YT_PRIVACY_STATUS:         public
         run: python run_pipeline.py
 
       - name: Save logs and Shorts artifacts
@@ -77,6 +78,7 @@ jobs:
           name: nocturne-artifacts-${{ github.run_number }}
           path: |
             last_upload.json
+            audio_quality_report.json
             short_audio_*.mp3
           if-no-files-found: ignore
           retention-days: 90
