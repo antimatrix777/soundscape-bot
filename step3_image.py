@@ -33,14 +33,26 @@ CHANNEL_NAME = "Nocturne Noise"
 MAX_RETRIES  = 3  # tentativas por fonte antes de pular
 
 STYLE_BASE = (
-    "nocturne lofi illustration, intimate night scene, warm amber lamp glow, "
-    "crescent moon and city skyline through large window, "
-    "cozy interior, houseplants, vinyl record, candle, "
-    "moody and atmospheric, cinematic digital art, "
-    "no text, no watermark, deep indigo night sky, "
-    "warm golden light contrasting with dark blue exterior, "
-    "high detail, painterly, dreamlike"
+    "premium cinematic soundscape artwork, immersive first-viewport scene, "
+    "quiet human-scale mood without visible text, no watermark, no logo, "
+    "high detail, atmospheric depth, natural light, editorial composition, "
+    "made for a long-form ambient YouTube thumbnail"
 )
+
+CATEGORY_STYLE = {
+    "rain": (
+        "cool blue-gray rain palette, wet reflections, glass texture, "
+        "subtle storm light, calm shelter feeling, realistic ambience"
+    ),
+    "jazz": (
+        "deep burgundy, brass, walnut wood, smoky club lighting, "
+        "instrument detail, mature late-night music atmosphere"
+    ),
+    "lofi": (
+        "muted teal, soft screen glow, paper notes, analog tape texture, "
+        "gentle workspace energy, modern cozy study mood"
+    ),
+}
 
 CATEGORY_PROMPTS = {
     "rain": [
@@ -457,7 +469,7 @@ def make_thumbnail(base_img, thumb_text, output="thumbnail.jpg", metadata_durati
 # CASCADE — 6 fontes, 3 tentativas cada
 # ══════════════════════════════════════════════════════════
 def get_image(category, pexels_query):
-    prompt = get_rotated_image_prompt(category)
+    prompt = f"{get_rotated_image_prompt(category)}, {CATEGORY_STYLE.get(category, '')}"
 
     ai_sources = [
         ("Together AI FLUX.1", _together),
