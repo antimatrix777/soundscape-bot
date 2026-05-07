@@ -105,7 +105,7 @@ def authenticate():
     return creds
 
 
-def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg"):
+def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg", privacy_status=None):
     """Faz upload do vídeo com metadata e thumbnail."""
 
     # Lê metadata
@@ -125,9 +125,14 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             raise FileNotFoundError(f"Vídeo não encontrado: {video_file}")
         video_file = sorted(videos, key=os.path.getmtime, reverse=True)[0]
 
+    privacy_status = privacy_status or os.environ.get("YT_PRIVACY_STATUS", "public")
+    if privacy_status not in {"private", "unlisted", "public"}:
+        raise ValueError("privacy_status must be one of: private, unlisted, public")
+
     print(f"\n📤 Fazendo upload do vídeo...")
     print(f"   🎬 Arquivo: {video_file}")
     print(f"   📋 Metadata: {metadata_file}")
+    print(f"   Auto publish: privacyStatus={privacy_status}")
 
     creds = get_credentials()
     youtube = build("youtube", "v3", credentials=creds)
@@ -142,7 +147,7 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
             "defaultLanguage": "en",
         },
         "status": {
-            "privacyStatus": "public",
+            "privacyStatus": privacy_status,
             "selfDeclaredMadeForKids": False,
             "madeForKids": False,
         }
@@ -181,6 +186,8 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
     video_id = response["id"]
     print(f"\n✅ Upload concluído! Video ID: {video_id}")
     print(f"   🔗 https://www.youtube.com/watch?v={video_id}")
+    if privacy_status != "public":
+        print("   Review required before publishing: video is not public.")
 
     # Sobe thumbnail
     if os.path.exists(thumbnail_file):
@@ -222,7 +229,8 @@ def upload_video(video_file, metadata_file=None, thumbnail_file="thumbnail.jpg")
     # Salva ID do vídeo publicado
     with open("last_upload.json", "w") as f:
         json.dump({"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
-                   "metadata_file": metadata_file, "video_file": video_file}, f, indent=2)
+                   "metadata_file": metadata_file, "video_file": video_file,
+                   "privacy_status": privacy_status}, f, indent=2)
 
     return video_id
 
@@ -233,13 +241,15 @@ def main():
                    help="Apenas autentica e gera token.json (rode na máquina local 1x)")
     p.add_argument("--video", type=str, default=None, help="Arquivo de vídeo")
     p.add_argument("--metadata", type=str, default=None, help="Arquivo metadata JSON")
+    p.add_argument("--privacy-status", choices=["private", "unlisted", "public"],
+                   default=None, help="Default: public, or YT_PRIVACY_STATUS env var")
     args = p.parse_args()
 
     if args.auth_only:
         authenticate()
     else:
         video_file = args.video or "final_video.mp4"
-        upload_video(video_file, args.metadata)
+        upload_video(video_file, args.metadata, privacy_status=args.privacy_status)
 
 
 if __name__ == "__main__":
