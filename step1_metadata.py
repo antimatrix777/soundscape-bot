@@ -113,7 +113,7 @@ USE_CASE_TAGS = {
               "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours",
               "thunderstorm sounds for sleep", "thunder and rain",
               "asmr rain no talking", "rain sounds no music", "window rain",
-              "heavy rain for sleep", "rain for babies"],
+              "heavy rain for sleep", "night rain ambience"],
     "jazz":  ["jazz for studying", "jazz for working", "jazz for sleep",
               "jazz background music", "jazz focus music", "jazz 2 hours",
               "jazz 3 hours", "smooth jazz for studying",
@@ -279,6 +279,8 @@ Channel language: ENGLISH ONLY. Everything in English.
 Channel promise: "The sound of wherever you want to be" — sounds for working, relaxing, before sleep, daily life.
 Channel tone: intimate, present, cinematic. Like a friend who knows exactly what you need.
 No clickbait. No ALL CAPS. No generic product descriptions.
+Protect monetization: avoid mass-produced, templated, misleading, or unrelated metadata.
+Every title and description must feel tied to the exact soundscape, not like a reusable shell.
 
 SEO STRATEGY: Hybrid titles.
 - Line 1 (the title): starts with a HIGH-SEARCH keyword cluster, then adds a cinematic line after a bullet (•).
@@ -365,14 +367,14 @@ Structure (in this exact order):
 7. HASHTAGS: {hashtags}
 
 --- TAGS RULES ---
-Generate exactly 25 tags as a JSON array of strings.
+Generate 12 to 18 tags as a JSON array of strings.
 - All lowercase, no hashtags, no special characters
 - Each tag is a standalone phrase - NO commas inside a tag
 - MUST include at least 2 duration-based tags: "{duration_hours} hour {category}", "{duration_hours} hours of {theme_data['theme'].split()[0]}", etc.
 - MUST include use-case tags like: {use_case_ex}
 - MUST include "nocturne noise" as one tag
-- MUST include at least 2 trending search terms: "asmr no talking", "sounds for babies", "study with me"
-- Mix: exact match, broad, long-tail
+- Do NOT add unrelated trending terms just because they are popular
+- Mix: exact match, broad, long-tail, but keep every tag truthful to the audio
 
 --- THUMBNAIL TEXT RULES ---
 - Max 4 words, warm, readable, example: '{dur_label} {theme_data['theme'].split()[0].title()}'
@@ -547,7 +549,7 @@ def build_fallback_metadata(theme_data, category, duration_hours, series_num):
         f"{duration_hours} hour ambient", f"{duration_hours} hours relaxing",
         "asmr no talking",
     ]
-    all_tags = list(dict.fromkeys(use_tags[:6] + base_tags))[:25]
+    all_tags = list(dict.fromkeys(use_tags[:6] + base_tags))[:18]
 
     return {
         "title": title[:80],
@@ -597,6 +599,59 @@ def pick_theme(theme_override=None, category=None):
     return random.choice(unused), cat
 
 
+MISLEADING_TAGS = {
+    "sounds for babies",
+    "study with me",
+    "viral",
+    "trending",
+    "tiktok",
+}
+
+CATEGORY_REQUIRED_TAGS = {
+    "rain": ["rain sounds", "rain sounds no music", "sleep sounds"],
+    "jazz": ["instrumental jazz", "smooth jazz", "jazz background music"],
+    "lofi": ["lofi beats", "lofi music", "study music"],
+}
+
+
+def postprocess_metadata(metadata, category, duration_hours, theme_data):
+    """Keep SEO useful without making the upload look mass-produced or misleading."""
+    metadata["title"] = metadata.get("title", "").strip()[:80]
+    metadata["description"] = metadata.get("description", "").strip()
+
+    raw_tags = metadata.get("tags", [])
+    clean_tags = []
+    for tag in raw_tags:
+        tag = re.sub(r"[^a-z0-9 ]+", "", str(tag).lower()).strip()
+        tag = re.sub(r"\s+", " ", tag)
+        if not tag or tag in MISLEADING_TAGS:
+            continue
+        if tag not in clean_tags:
+            clean_tags.append(tag)
+
+    for tag in CATEGORY_REQUIRED_TAGS.get(category, []):
+        if tag not in clean_tags:
+            clean_tags.insert(0, tag)
+
+    duration_tags = [
+        f"{duration_hours} hour {category}",
+        f"{duration_hours} hours {category}",
+        f"{duration_hours} hours {theme_data['theme'].split()[0]}",
+    ]
+    for tag in duration_tags:
+        if tag not in clean_tags:
+            clean_tags.append(tag)
+
+    if "nocturne noise" not in clean_tags:
+        clean_tags.append("nocturne noise")
+
+    metadata["tags"] = clean_tags[:18]
+    metadata["editorial_note"] = (
+        "Metadata sanitized for truthful search intent and lower repetitive-content risk."
+    )
+    return metadata
+
+
 def generate_metadata(theme_override=None, duration_hours=None, category=None):
     theme_data, category = pick_theme(theme_override, category)
     if not duration_hours:
@@ -612,6 +667,8 @@ def generate_metadata(theme_override=None, duration_hours=None, category=None):
 
     if metadata is None:
         metadata = build_fallback_metadata(theme_data, category, duration_hours, series_num)
+
+    metadata = postprocess_metadata(metadata, category, duration_hours, theme_data)
 
     metadata["theme"]          = theme_data["theme"]
     metadata["theme_data"]     = theme_data
