@@ -1,9 +1,9 @@
 # STEP 2 - Audio Generator (Nocturne Noise)
 #
-# Editorial rule: never publish questionable audio.
+# Editorial rule: never publish questionable or copyright-risk audio.
 # The pipeline now fails closed when it cannot find clean sources, instead of
 # accepting unfiltered previews that may contain voices, radio, chatter, or
-# distracting background sounds.
+# distracting background sounds. Default license mode is CC0/public domain only.
 
 import glob
 import json
@@ -20,13 +20,13 @@ from pydub import AudioSegment
 load_dotenv()
 
 FREESOUND_KEY = os.environ.get("FREESOUND_API_KEY", "")
-JAMENDO_KEY = os.environ.get("JAMENDO_CLIENT_ID", "")
 
 TARGET_DBFS = -20.0
 CROSSFADE_MS = 6000
 MIN_SAMPLE_SEC = 75
 MIN_ACCEPTED_SEGMENTS = 3
 QUALITY_REPORT = "audio_quality_report.json"
+LICENSE_MODE = os.environ.get("AUDIO_LICENSE_MODE", "cc0_only").lower()
 
 BLOCKED_TAGS = {
     "voice", "voices", "speech", "talk", "talking", "spoken", "vocal", "vocals",
@@ -66,6 +66,13 @@ FREESOUND_SAFE_FALLBACKS = {
         "warm tape noise loop",
         "quiet cafe ambience no voices",
     ],
+    "jazz": [
+        "soft piano loop instrumental no vocal",
+        "jazz piano instrumental no vocal",
+        "upright bass soft instrumental",
+        "brush drums soft instrumental",
+        "quiet piano bar instrumental",
+    ],
 }
 
 
@@ -74,6 +81,7 @@ def _new_report(category, duration_hours):
         "category": category,
         "duration_hours": duration_hours,
         "target_dbfs": TARGET_DBFS,
+        "license_mode": LICENSE_MODE,
         "accepted": [],
         "rejected": [],
         "warnings": [],
@@ -101,8 +109,29 @@ def _sound_label(sound):
         "id": sound.get("id"),
         "name": sound.get("name", ""),
         "duration": sound.get("duration"),
+        "license": sound.get("license", ""),
+        "username": sound.get("username", ""),
         "tags": sorted(_tags(sound))[:24],
     }
+
+
+def _is_allowed_license(sound):
+    if LICENSE_MODE in {"any", "allow_any"}:
+        return True
+
+    license_name = str(sound.get("license", "")).lower()
+    return (
+        "creative commons 0" in license_name
+        or "cc0" in license_name
+        or "public domain" in license_name
+    )
+
+
+def _freesound_filter():
+    base = f"duration:[{MIN_SAMPLE_SEC} TO 7200]"
+    if LICENSE_MODE in {"any", "allow_any"}:
+        return base
+    return f'{base} license:"Creative Commons 0"'
 
 
 def _chunk_dbfs(seg, chunk_ms=5000):
@@ -170,7 +199,7 @@ def freesound_search(query, report, num=12):
         "https://freesound.org/apiv2/search/text/",
         params={
             "query": query,
-            "filter": f"duration:[{MIN_SAMPLE_SEC} TO 7200]",
+            "filter": _freesound_filter(),
             "fields": "id,name,duration,tags,previews,license,username",
             "page_size": num,
             "sort": "rating_desc",
@@ -183,7 +212,13 @@ def freesound_search(query, report, num=12):
 
     clean = []
     for sound in results:
-        if _has_bad_metadata(sound):
+        if not _is_allowed_license(sound):
+            report["rejected"].append({
+                "source": "freesound",
+                "reason": f"blocked license: {sound.get('license', '')}",
+                "sound": _sound_label(sound),
+            })
+        elif _has_bad_metadata(sound):
             report["rejected"].append({
                 "source": "freesound",
                 "reason": "blocked metadata",
@@ -266,63 +301,6 @@ def fetch_freesound(data, report):
             })
 
     return load_segments(files, data["category"], report)
-
-
-def fetch_jamendo(report):
-    if not JAMENDO_KEY:
-        raise ValueError("JAMENDO_CLIENT_ID not set")
-
-    r = requests.get(
-        "https://api.jamendo.com/v3.0/tracks/",
-        params={
-            "client_id": JAMENDO_KEY,
-            "format": "json",
-            "limit": 12,
-            "tags": "jazz+instrumental",
-            "vocalinstrumental": "instrumental",
-            "audioformat": "mp31",
-            "include": "musicinfo",
-            "order": "popularity_total",
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-
-    results = r.json().get("results", [])
-    files = []
-    os.makedirs("audio_tmp", exist_ok=True)
-
-    for track in results:
-        title = " ".join([track.get("name", ""), track.get("artist_name", "")])
-        if BLOCKED_NAME_PATTERN.search(title):
-            report["rejected"].append({
-                "source": "jamendo",
-                "reason": "blocked title or artist metadata",
-                "track": {"id": track.get("id"), "name": track.get("name")},
-            })
-            continue
-
-        url = track.get("audio")
-        if not url:
-            continue
-
-        path = f"audio_tmp/jm_{track['id']}.mp3"
-        if not os.path.exists(path):
-            r2 = requests.get(url, timeout=120)
-            r2.raise_for_status()
-            with open(path, "wb") as f:
-                f.write(r2.content)
-
-        files.append((path, {
-            "source": "jamendo",
-            "track": {
-                "id": track.get("id"),
-                "name": track.get("name"),
-                "artist": track.get("artist_name"),
-            },
-        }))
-
-    return load_segments(files, "jazz", report)
 
 
 def load_segments(files, category, report):
@@ -428,10 +406,7 @@ def main():
     print("Generating audio:", category)
 
     try:
-        if category == "jazz":
-            segs = fetch_jamendo(report)
-        else:
-            segs = fetch_freesound(data, report)
+        segs = fetch_freesound(data, report)
 
         audio = loop_audio(segs, duration)
         validate_final_audio(audio, report)
