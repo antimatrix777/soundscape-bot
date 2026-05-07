@@ -39,6 +39,7 @@ GEMINI_KEY   = os.environ.get("GEMINI_API_KEY", "")
 TOGETHER_KEY = os.environ.get("TOGETHER_API_KEY", "")
 FAL_KEY      = os.environ.get("FAL_API_KEY", "")
 PEXELS_KEY   = os.environ.get("PEXELS_API_KEY", "")
+ALLOW_YTDLP_FALLBACK = os.environ.get("ALLOW_YTDLP_FALLBACK", "0").lower() in {"1", "true", "yes"}
 
 SHORT_DURATION_S = 55
 FADE_MS          = 1500
@@ -873,6 +874,11 @@ def main():
         print(f"   ✓ Usando áudio existente: {SHORT_AUDIO}")
         short_audio = str(SHORT_AUDIO)
     else:
+        if not ALLOW_YTDLP_FALLBACK:
+            raise RuntimeError(
+                "short_audio.mp3 not found. Refusing yt-dlp fallback so Shorts do not reuse "
+                "older videos that may have copyright claims. Run the weekly CC0 audio pipeline first."
+            )
         print("   Baixando áudio via yt-dlp (fallback)...")
         raw_audio = download_audio(video_id)
         print("\n[3/7] Cortando melhor trecho...")
