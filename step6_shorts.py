@@ -43,6 +43,7 @@ PEXELS_KEY   = os.environ.get("PEXELS_API_KEY", "")
 SHORT_DURATION_S = 55
 FADE_MS          = 1500
 SHORT_FPS        = 30
+SHORT_TARGET_DBFS = -18.0
 SHORT_OUTPUT     = Path("short_final.mp4")
 SHORT_AUDIO      = Path("short_audio.mp3")
 SHORT_THUMB      = Path("short_thumb.jpg")    # thumbnail pura (sem texto)
@@ -323,18 +324,26 @@ def cut_best_segment(audio_path):
     start_ms   = 60_000          # pula 1 minuto de intro
     chunk_ms   = SHORT_DURATION_S * 1000
     best_start = start_ms
-    best_rms   = 0
+    best_score = None
 
     for t in range(start_ms, min(total_ms - chunk_ms, 600_000), 120_000):
-        rms = audio[t : t + chunk_ms].rms
-        if rms > best_rms:
-            best_rms, best_start = rms, t
+        candidate = audio[t : t + chunk_ms]
+        parts = [candidate[i:i + 5000].dBFS for i in range(0, len(candidate), 5000)
+                 if candidate[i:i + 5000].dBFS != float("-inf")]
+        if not parts:
+            continue
+        loudness_range = max(parts) - min(parts)
+        target_distance = abs(candidate.dBFS - SHORT_TARGET_DBFS)
+        score = loudness_range + target_distance
+        if best_score is None or score < best_score:
+            best_score, best_start = score, t
 
     segment = audio[best_start : best_start + chunk_ms]
     segment = segment.fade_in(FADE_MS).fade_out(FADE_MS)
 
-    from pydub.effects import normalize
-    segment = normalize(segment)
+    if segment.dBFS != float("-inf"):
+        gain = max(min(SHORT_TARGET_DBFS - segment.dBFS, 6.0), -9.0)
+        segment = segment.apply_gain(gain)
 
     segment.export(str(SHORT_AUDIO), format="mp3", bitrate="192k")
     print(f"   Corte: {SHORT_DURATION_S}s @ {best_start//1000}s do original")
@@ -791,7 +800,7 @@ def upload_short(title, category, video_id, thumb_path):
         f"{title}\n\n"
         f"🎧 Full version → https://www.youtube.com/watch?v={video_id}\n\n"
         f"Nocturne Noise — sounds for wherever you want to be.\n"
-        f"Subscribe → https://www.youtube.com/@NocturneNoiseYT\n\n"
+        f"Subscribe → https://www.youtube.com/@NocturneNoise\n\n"
         f"{hashtags}"
     )
 
