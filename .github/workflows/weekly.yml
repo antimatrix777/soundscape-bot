@@ -68,6 +68,7 @@ jobs:
           PLAYLIST_JAZZ:            ${{ secrets.PLAYLIST_JAZZ }}
           PLAYLIST_LOFI:            ${{ secrets.PLAYLIST_LOFI }}
           AUDIO_LICENSE_MODE:        cc0_only
+          ALLOW_ORIGINAL_AUDIO_FALLBACK: 1
           YT_PRIVACY_STATUS:         public
         run: python run_pipeline.py
 
