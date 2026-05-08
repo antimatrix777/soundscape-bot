@@ -23,9 +23,11 @@ STEP_TIMEOUTS = {
 }
 
 def run(script, extra_args=None):
-    cmd         = [sys.executable, script] + (extra_args or [])
+    cmd         = [sys.executable, "-u", script] + (extra_args or [])
     script_name = os.path.basename(script)
     timeout_sec = STEP_TIMEOUTS.get(script_name, 600)
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
 
     print(f"\n{'='*55}")
     print(f"Rodando: {' '.join(cmd)}")
@@ -33,7 +35,7 @@ def run(script, extra_args=None):
     print(f"{'='*55}")
 
     try:
-        result = subprocess.run(cmd, timeout=timeout_sec)
+        result = subprocess.run(cmd, timeout=timeout_sec, env=env)
     except subprocess.TimeoutExpired:
         print(f"\n⏰ TIMEOUT: {script_name} ultrapassou {timeout_sec//60} minutos.")
         print(f"   Aumente STEP_TIMEOUTS['{script_name}'] se necessário.")
