@@ -1,700 +1,272 @@
 """
-STEP 1 — Metadata Generator (3-provider cascade)
-Providers: Groq → Mistral → Gemini → fallback
-All content in English for maximum CPM reach.
-
-SEO STRATEGY: Hybrid titles — keyword cluster FIRST for search discoverability,
-cinematic line SECOND for brand identity and CTR.
-Formula: "[SEO Keyword] • [Cinematic Line]"
-
-FIXES v2:
-  - Title separator unified: prompt now correctly uses • (bullet)
-  - mark_theme_used: reset now saves [] instead of [theme_name]
-  - Expanded KEYWORD_CLUSTERS: 5-6 → 12+ per category (long-tail SEO)
-  - Expanded FALLBACK_TITLES: 5-6 → 12+ per category (emotional variety)
-  - Used title tracking: used_titles_long.json prevents title reuse
-  - AI prompt injects recent titles to avoid repetition
-  - Description structure optimized: CTA visible in first 3 lines
-  - USE_CASE_TAGS expanded with trending search terms
-"""
-import json, os, random, argparse, re
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-
-load_dotenv()
-
-DURATIONS = [2, 3, 4]
-
-THEMES = {
-    "rain": [
-        {"theme": "heavy rain on window at night",   "query": "heavy rain window",      "pexels": "rain window night"},
-        {"theme": "gentle rain in forest",           "query": "gentle rain forest",     "pexels": "forest rain"},
-        {"theme": "distant thunderstorm with rain",  "query": "distant thunder rain",   "pexels": "storm clouds rain"},
-        {"theme": "rain on rooftop",                 "query": "rain rooftop",           "pexels": "rain rooftop"},
-        {"theme": "rain on car roof while parked",   "query": "rain car",               "pexels": "rain car window"},
-        {"theme": "light drizzle at night city",     "query": "light rain city night",  "pexels": "city rain night"},
-        {"theme": "rain on tent in forest",          "query": "rain tent camping",      "pexels": "tent forest rain"},
-        {"theme": "rain on lake surface",            "query": "rain lake water",        "pexels": "rain lake"},
-        {"theme": "thunderstorm with heavy lightning",  "query": "thunderstorm lightning",  "pexels": "lightning storm night"},
-        {"theme": "rolling thunder in the distance",    "query": "rolling thunder distant", "pexels": "dark storm clouds"},
-    ],
-    "jazz": [
-        {"theme": "late night jazz cafe",              "query": "jazz cafe night instrumental",    "tags": "jazz",        "pexels": "jazz cafe night"},
-        {"theme": "smooth piano jazz for relaxation",  "query": "smooth jazz piano instrumental",  "tags": "piano jazz",  "pexels": "grand piano low light"},
-        {"theme": "soft jazz with gentle rain",        "query": "soft jazz instrumental mellow",   "tags": "jazz",        "pexels": "jazz rain window"},
-        {"theme": "bossa nova instrumental morning",   "query": "bossa nova instrumental",         "tags": "bossanova",   "pexels": "coffee morning sunlight"},
-        {"theme": "mellow jazz guitar evening",        "query": "jazz guitar mellow instrumental", "tags": "jazz guitar", "pexels": "guitar low light evening"},
-        {"theme": "slow jazz piano bar night",         "query": "jazz piano bar slow",             "tags": "jazz piano",  "pexels": "piano bar night"},
-        {"theme": "peaceful jazz trio afternoon",      "query": "jazz trio acoustic peaceful",     "tags": "jazz",        "pexels": "jazz musician"},
-        {"theme": "winter jazz by the fireplace",      "query": "jazz warm cozy instrumental",     "tags": "jazz",        "pexels": "fireplace winter cozy"},
-    ],
-    "lofi": [
-        {"theme": "lofi beats for late night studying",    "query": "lofi study beats chill",         "tags": "lofi",        "pexels": "desk lamp night study"},
-        {"theme": "lofi chill morning vibes",             "query": "lofi morning chill relaxing",    "tags": "lofi chill",  "pexels": "morning window sunlight"},
-        {"theme": "rainy lofi hip hop",                   "query": "lofi hip hop rain chill",        "tags": "lofi",        "pexels": "rain window cozy desk"},
-        {"theme": "lofi cafe beats afternoon",            "query": "lofi cafe chill beats",          "tags": "lofi cafe",   "pexels": "cozy cafe afternoon"},
-        {"theme": "sleepy lofi beats for relaxation",     "query": "lofi sleep relax calm",          "tags": "lofi sleep",  "pexels": "bedroom night calm"},
-        {"theme": "lofi jazz hop evening",                "query": "lofi jazz hop instrumental",     "tags": "lofi jazz",   "pexels": "vinyl record player"},
-        {"theme": "nostalgic lofi beats sunset",          "query": "lofi nostalgic sunset chill",    "tags": "lofi",        "pexels": "sunset window golden"},
-        {"theme": "lofi beats cozy winter night",         "query": "lofi winter cozy beats",         "tags": "lofi winter", "pexels": "snow window night cozy"},
-    ],
-}
-
-# ─────────────────────────────────────────────────────────
-# SEO KEYWORD CLUSTERS (expanded with long-tail keywords)
-# ─────────────────────────────────────────────────────────
-KEYWORD_CLUSTERS = {
-    "rain": [
-        "Rain Sounds for Sleep",
-        "Rainy Night Ambience",
-        "Heavy Rain Sounds",
-        "Rain Sounds",
-        "Relaxing Rain",
-        "Thunderstorm Sounds",
-        "Rain and Thunder",
-        "ASMR Rain",
-        "Window Rain at Night",
-        "Rain for Anxiety Relief",
-        "Rain Sounds No Music",
-        "Gentle Rain for Studying",
-    ],
-    "jazz": [
-        "Late Night Jazz",
-        "Smooth Jazz",
-        "Jazz Piano",
-        "Jazz for Studying",
-        "Relaxing Jazz Music",
-        "Jazz Piano Bar",
-        "Midnight Jazz",
-        "Jazz for Reading",
-        "Instrumental Jazz Cafe",
-        "Jazz Club Ambience",
-        "Bossa Nova Instrumental",
-        "Jazz for Working",
-    ],
-    "lofi": [
-        "Lofi Beats",
-        "Lofi Hip Hop",
-        "Lofi Music for Studying",
-        "Chill Lofi Beats",
-        "Lofi Chill Music",
-        "Lofi Radio",
-        "Afternoon Lofi",
-        "Lofi Rain",
-        "Lofi for Working",
-        "Lofi Beats to Sleep",
-        "Anime Lofi Beats",
-        "Lofi Jazz Hop",
-    ],
-}
-
-USE_CASE_TAGS = {
-    "rain":  ["rain sounds for sleep", "rain for studying", "rain to fall asleep",
-              "rain for anxiety", "rain sounds 2 hours", "rain sounds 3 hours",
-              "thunderstorm sounds for sleep", "thunder and rain",
-              "asmr rain no talking", "rain sounds no music", "window rain",
-              "heavy rain for sleep", "night rain ambience"],
-    "jazz":  ["jazz for studying", "jazz for working", "jazz for sleep",
-              "jazz background music", "jazz focus music", "jazz 2 hours",
-              "jazz 3 hours", "smooth jazz for studying",
-              "jazz piano for relaxation", "jazz cafe music",
-              "instrumental jazz for working", "bossa nova for studying"],
-    "lofi":  ["lofi for studying", "lofi for sleep", "lofi beats to relax",
-              "lofi hip hop study", "lofi chill beats", "lofi 2 hours",
-              "lofi 3 hours", "lofi music for work",
-              "lofi radio", "anime lofi", "lofi rain",
-              "chill beats for homework", "lofi for reading"],
-}
-
-# ─────────────────────────────────────────────────────────
-# SERIES COUNTER
-# ─────────────────────────────────────────────────────────
-SERIES_FILE = "series_counter.json"
-
-def get_series_number(category):
-    counters = {}
-    if os.path.exists(SERIES_FILE):
-        try:
-            with open(SERIES_FILE) as f:
-                counters = json.load(f)
-        except Exception:
-            counters = {}
-    counters[category] = counters.get(category, 0) + 1
-    with open(SERIES_FILE, "w") as f:
-        json.dump(counters, f)
-    return counters[category]
-
-# ─────────────────────────────────────────────────────────
-# USED THEMES TRACKER
-# ─────────────────────────────────────────────────────────
-USED_THEMES_FILE = "used_themes.json"
-
-def get_used_themes():
-    if os.path.exists(USED_THEMES_FILE):
-        try:
-            with open(USED_THEMES_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
-
-def mark_theme_used(theme_name):
-    used = get_used_themes()
-    all_themes = [t["theme"] for cat in THEMES.values() for t in cat]
-    used.append(theme_name)
-    if len(used) >= len(all_themes):
-        used = []
-    with open(USED_THEMES_FILE, "w") as f:
-        json.dump(used, f)
-
-# ─────────────────────────────────────────────────────────
-# USED LONG VIDEO TITLES TRACKER
-# Prevents AI from generating the same or very similar titles
-# ─────────────────────────────────────────────────────────
-USED_TITLES_LONG_FILE = "used_titles_long.json"
-
-def get_used_long_titles():
-    """Returns dict of {title: timestamp} for titles used in the last 90 days."""
-    if not os.path.exists(USED_TITLES_LONG_FILE):
-        return {}
-    try:
-        with open(USED_TITLES_LONG_FILE) as f:
-            data = json.load(f)
-        cutoff = (datetime.now() - timedelta(days=90)).isoformat()
-        return {t: ts for t, ts in data.items() if ts > cutoff}
-    except Exception:
-        return {}
-
-def save_long_title(title):
-    """Saves a used title with timestamp."""
-    used = get_used_long_titles()
-    used[title.lower().strip()] = datetime.now().isoformat()
-    with open(USED_TITLES_LONG_FILE, "w") as f:
-        json.dump(used, f, indent=2)
-
-# ─────────────────────────────────────────────────────────
-# HASHTAGS PER CATEGORY
-# ─────────────────────────────────────────────────────────
-CATEGORY_HASHTAGS = {
-    "rain":  "#nocturnoise #rainambience #sleepsounds #rainsounds #relaxingsounds #thunderstorm",
-    "jazz":  "#nocturnoise #jazzambience #instrumentaljazz #smoothjazz #jazzmusic",
-    "lofi":  "#nocturnoise #lofi #lofihiphop #lofibeats #chillbeats #studymusic",
-}
-
-# ─────────────────────────────────────────────────────────
-# CREATIVE FALLBACK TITLES (expanded from 5-6 to 12+ per category)
-# Organized by emotional arcs: discovery, comfort, nostalgia, mystery, farewell
-# ─────────────────────────────────────────────────────────
-FALLBACK_TITLES = {
-    "rain": [
-        # Discovery
-        "Rain Sounds for Sleep • It Won't Stop Raining and That's Perfect",
-        "Heavy Rain Sounds • You Forgot to Close the Window",
-        "Rainy Night Ambience • The Rain Started While You Were Reading",
-        # Comfort
-        "Rain Sounds • A Quiet Night with Nothing to Worry About",
-        "Relaxing Rain • It's Been Raining Since This Morning",
-        "Rain and Thunder • The Kind of Rain You Fall Asleep To",
-        "Window Rain at Night • You're Warm and the World Is Wet",
-        # Nostalgia
-        "Rain Sounds for Sleep • The Same Rain from That December",
-        "ASMR Rain • You've Heard This Rain Before",
-        # Mystery
-        "Thunderstorm Sounds • The Storm Arrived Without Warning",
-        "Heavy Rain Sounds • The City Disappeared Hours Ago",
-        "Rain for Anxiety Relief • Let It All Wash Away Tonight",
-        # Farewell
-        "Gentle Rain for Studying • One Last Storm Before Morning",
-    ],
-    "jazz": [
-        # Discovery
-        "Late Night Jazz • For Nobody in Particular",
-        "Jazz Piano • The Last Set of the Night",
-        "Smooth Jazz • The Piano Player Stayed After Closing",
-        # Comfort
-        "Jazz for Studying • A Jazz Bar Somewhere in Paris",
-        "Relaxing Jazz Music • One More Song Before We Go",
-        "Jazz Club Ambience • The Kind of Place You Keep Coming Back To",
-        "Instrumental Jazz Cafe • Somewhere Between Coffee and Midnight",
-        # Nostalgia
-        "Jazz Piano Bar • This Song Played the Night You Met",
-        "Midnight Jazz • The Same Record, Different City",
-        # Mystery
-        "Bossa Nova Instrumental • Who's Still Playing at This Hour",
-        "Jazz for Reading • The Bartender Knows Your Order Already",
-        "Late Night Jazz • Smoke, Slow Keys, and Nobody Watching",
-        # Farewell
-        "Jazz for Working • The Musician Packed Up and Left the Key",
-    ],
-    "lofi": [
-        # Discovery
-        "Lofi Beats • The Playlist That Never Ends",
-        "Lofi Hip Hop • Late Night, Headphones On",
-        "Chill Lofi Beats • You Pressed Play and Forgot the World",
-        # Comfort
-        "Lofi Music for Studying • The Coffee Got Cold Hours Ago",
-        "Lofi Chill Music • Sunday Morning, No Plans",
-        "Lofi Radio • You've Been Here All Night and That's Okay",
-        "Lofi for Working • The Kind of Beat That Keeps You Going",
-        # Nostalgia
-        "Lofi Beats to Sleep • The Same Playlist from Last Summer",
-        "Lofi Rain • This Beat Sounds Like a Memory",
-        # Mystery
-        "Anime Lofi Beats • The Algorithm Brought You Here",
-        "Lofi Jazz Hop • Who Made This and Why Is It Perfect",
-        "Afternoon Lofi • 3AM and You're Still Pressing Replay",
-        # Farewell
-        "Lofi Beats • Last Track Before the Sun Comes Up",
-    ],
-}
-
-CATEGORY_CONTEXT = {
-    "rain":  ("sleep, relaxation, and stress relief",   "rain sounds, sleep sounds, relaxing rain, thunderstorm"),
-    "jazz":  ("late night focus, relaxation, and mood", "jazz music, instrumental jazz, background jazz"),
-    "lofi":  ("studying, relaxation, and chill vibes",  "lofi beats, lofi hip hop, chill music, study beats"),
-}
-
-SYSTEM_PROMPT = """You are a YouTube SEO specialist for an ambient/soundscape channel called 'Nocturne Noise'.
-Channel language: ENGLISH ONLY. Everything in English.
-Channel promise: "The sound of wherever you want to be" — sounds for working, relaxing, before sleep, daily life.
-Channel tone: intimate, present, cinematic. Like a friend who knows exactly what you need.
-No clickbait. No ALL CAPS. No generic product descriptions.
-Protect monetization: avoid mass-produced, templated, misleading, or unrelated metadata.
-Every title and description must feel tied to the exact soundscape, not like a reusable shell.
-
-SEO STRATEGY: Hybrid titles.
-- Line 1 (the title): starts with a HIGH-SEARCH keyword cluster, then adds a cinematic line after a bullet (•).
-- This gives you discoverability AND identity at the same time.
-- The keyword cluster brings the click from search. The cinematic line creates the fan.
-
-Respond ONLY with valid JSON — no markdown, no code fences, no extra text."""
-
-
-def build_prompt(theme_data, category, duration_hours, series_num):
-    audience, support_kw = CATEGORY_CONTEXT[category]
-    dur_label   = f"{duration_hours} Hours"
-    hashtags    = CATEGORY_HASHTAGS[category]
-    kw_clusters = KEYWORD_CLUSTERS.get(category, ["Relaxing Sounds"])
-    kw_examples = "\n  ".join(kw_clusters)
-    use_cases   = USE_CASE_TAGS.get(category, [])
-    use_case_ex = ", ".join(use_cases[:5])
-
-    # Anti-repetition: inject recent titles
-    used_titles = get_used_long_titles()
-    avoid_section = ""
-    if used_titles:
-        recent = list(used_titles.keys())[-8:]
-        avoid_lines = "\n  ".join(f'- "{t}"' for t in recent)
-        avoid_section = f"""
-
---- AVOID THESE (recently used titles — do NOT reuse or create similar ones) ---
-  {avoid_lines}
+step1_metadata.py
+Gera metadados (título, descrição, tags, playlist) para vídeos de chuva/raios
+do canal Nocturne Noise. Foco exclusivo: rain sounds for sleeping.
 """
 
-    return f"""Generate YouTube metadata for the Nocturne Noise ambient channel.
+import os
+import json
+import random
+from datetime import datetime
 
-Theme: "{theme_data['theme']}"
-Category: {category}
-Duration: {duration_hours} hours
-Series number: Vol. {series_num}
-Target audience: {audience}
-Keywords to weave in: {support_kw}
-Channel name: Nocturne Noise
-Channel URL: https://www.youtube.com/@NocturneNoise
+# ── Configuração do nicho ────────────────────────────────────────────────────
 
---- TITLE RULES ---
-Format: "[SEO Keyword Cluster] • [Cinematic Line]"
-Max 80 chars total. Use a bullet character • to separate the two parts.
+CHANNEL_NAME = "Nocturne Noise"
 
-Available keyword clusters for this category (pick ONE - the most relevant):
-  {kw_examples}
-
-Cinematic line rules:
-- Short, evocative, scene-setting - like a story in one line
-- Intimate, second person when possible
-- Specific moment, not a product category
-- MUST be UNIQUE — create something that has never been used before
-
-Good full title examples:
-  "Rain Sounds for Sleep • You Forgot to Close the Window"
-  "Late Night Jazz • The Last Set of the Evening"
-  "Coffee Shop Ambience • A Quiet Corner, Just You"
-  "Brown Noise for Focus • Block Everything Out"
-  "Forest Sounds • Somewhere Far from Everything"
-  "Tokyo Night Ambience • 3AM and the City Is Still Breathing"
-  "Lofi Beats • The Playlist That Outlasted the Night"
-  "Thunderstorm Sounds • The Sky Cracked Open and You Stayed"
-  "Smooth Jazz • The Bartender Already Knows Your Order"
-
-Bad title examples:
-  "A quiet corner of the jazz club long after everyone's gone" (no SEO keyword)
-  "RELAXING RAIN SOUNDS 3 HOURS" (no identity)
-  "Heavy Rain Ambience for Sleep" (no cinematic hook)
-  "Rain Sounds | You Forgot to Close the Window" (wrong separator — must use •, not |)
-{avoid_section}
---- DESCRIPTION RULES ---
-Total: 500-700 chars.
-
-IMPORTANT: The description is a single JSON string. Use \\\\n for line breaks, never raw newlines.
-
-Structure (in this exact order):
-1. HOOK (2 sentences): Second-person cinematic sentences placing the listener in the scene. Example: "You opened the window a few minutes ago. The rain started softly. Now it won't stop, and you don't want it to."
-2. CTA LINE: "🔔 New sounds twice a week — subscribe → https://www.youtube.com/@NocturneNoise"
-3. USE-CASE LINE: "Perfect for: studying, working, falling asleep, unwinding after a long day."
-4. KEYWORD LINE: Natural sentence with duration and theme. Example: "{duration_hours} hours of uninterrupted {theme_data['theme']}."
-5. TIMESTAMPS: "0:00 Intro\\\\n0:30 {theme_data['theme'].title()}\\\\n[end time] Fade out"
-6. SOCIAL PROOF: "👍 If this helped you, leave a like — it really helps the channel grow."
-7. HASHTAGS: {hashtags}
-
---- TAGS RULES ---
-Generate 12 to 18 tags as a JSON array of strings.
-- All lowercase, no hashtags, no special characters
-- Each tag is a standalone phrase - NO commas inside a tag
-- MUST include at least 2 duration-based tags: "{duration_hours} hour {category}", "{duration_hours} hours of {theme_data['theme'].split()[0]}", etc.
-- MUST include use-case tags like: {use_case_ex}
-- MUST include "nocturne noise" as one tag
-- Do NOT add unrelated trending terms just because they are popular
-- Mix: exact match, broad, long-tail, but keep every tag truthful to the audio
-
---- THUMBNAIL TEXT RULES ---
-- Max 4 words, warm, readable, example: '{dur_label} {theme_data['theme'].split()[0].title()}'
-- Should match the SEO keyword cluster you chose for the title
-
-Return ONLY this JSON:
-{{
-  "title": "...",
-  "description": "...",
-  "tags": ["tag one", "tag two", "tag three"],
-  "thumbnail_text": "max 4 words",
-  "youtube_category_id": "10"
-}}"""
-
-
-def clean_json(raw: str) -> dict:
-    """
-    Robust JSON cleaner. Handles:
-    - Code fences
-    - Raw (unescaped) newlines/tabs inside JSON strings causing 'Invalid control character'
-    - BOM characters
-    """
-    raw = raw.strip().lstrip('\ufeff')
-    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-    raw = raw.strip()
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    def escape_string_internals(text):
-        result  = []
-        in_str  = False
-        escaped = False
-        for ch in text:
-            if escaped:
-                result.append(ch)
-                escaped = False
-            elif ch == '\\' and in_str:
-                result.append(ch)
-                escaped = True
-            elif ch == '"':
-                in_str = not in_str
-                result.append(ch)
-            elif in_str and ch == '\n':
-                result.append('\\n')
-            elif in_str and ch == '\r':
-                result.append('\\r')
-            elif in_str and ch == '\t':
-                result.append('\\t')
-            elif in_str and ord(ch) < 32:
-                result.append(f'\\u{ord(ch):04x}')
-            else:
-                result.append(ch)
-        return ''.join(result)
-
-    try:
-        return json.loads(escape_string_internals(raw))
-    except json.JSONDecodeError:
-        pass
-
-    m = re.search(r'\{.*\}', raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(escape_string_internals(m.group()))
-        except Exception:
-            pass
-
-    raise ValueError(f"Invalid JSON after all cleanup attempts:\n{raw[:300]}")
-
-
-def call_groq(prompt):
-    import requests
-    key = os.environ.get("GROQ_API_KEY", "")
-    if not key: raise ValueError("GROQ_API_KEY not set")
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": "llama-3.3-70b-versatile",
-              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": prompt}],
-              "temperature": 0.8, "max_tokens": 1200},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-
-def call_mistral(prompt):
-    import requests
-    key = os.environ.get("MISTRAL_API_KEY", "")
-    if not key: raise ValueError("MISTRAL_API_KEY not set")
-    r = requests.post(
-        "https://api.mistral.ai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": "mistral-small-latest",
-              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                           {"role": "user", "content": prompt}],
-              "temperature": 0.8, "max_tokens": 1200},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-
-def call_gemini(prompt):
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if not key: raise ValueError("GEMINI_API_KEY not set")
-    try:
-        from google import genai
-        client   = genai.Client(api_key=key)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
-        )
-        return response.text
-    except ImportError:
-        import google.generativeai as genai_old
-        genai_old.configure(api_key=key)
-        model    = genai_old.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(f"{SYSTEM_PROMPT}\n\n{prompt}")
-        return response.text
-
-
-PROVIDERS = [
-    ("Groq Llama 3.3 70B", call_groq),
-    ("Mistral Small",       call_mistral),
-    ("Gemini 2.0 Flash",    call_gemini),
+RAIN_VARIANTS = [
+    {
+        "id": "heavy_rain",
+        "label": "Heavy Rain",
+        "description_pt": "chuva forte e constante",
+        "search_terms": ["heavy rain", "torrential rain", "pouring rain"],
+    },
+    {
+        "id": "gentle_rain",
+        "label": "Gentle Rain",
+        "description_pt": "chuva suave e relaxante",
+        "search_terms": ["gentle rain", "soft rain", "light rain"],
+    },
+    {
+        "id": "rain_window",
+        "label": "Rain on Window",
+        "description_pt": "chuva batendo na janela",
+        "search_terms": ["rain on window", "rain against glass", "rain on glass"],
+    },
+    {
+        "id": "rain_roof",
+        "label": "Rain on Roof",
+        "description_pt": "chuva no telhado",
+        "search_terms": ["rain on roof", "rain on tin roof", "rain on metal roof"],
+    },
+    {
+        "id": "rain_forest",
+        "label": "Rain in Forest",
+        "description_pt": "chuva na floresta",
+        "search_terms": ["rain in forest", "forest rain", "jungle rain"],
+    },
+    {
+        "id": "rain_thunder",
+        "label": "Thunderstorm",
+        "description_pt": "tempestade com raios e trovões",
+        "search_terms": ["thunderstorm", "thunder and rain", "lightning storm"],
+    },
+    {
+        "id": "thunder_heavy",
+        "label": "Heavy Thunderstorm",
+        "description_pt": "tempestade intensa com raios",
+        "search_terms": ["heavy thunderstorm", "severe thunderstorm", "powerful thunder"],
+    },
+    {
+        "id": "rain_night",
+        "label": "Night Rain",
+        "description_pt": "chuva noturna para dormir",
+        "search_terms": ["night rain", "rain at night", "rainy night"],
+    },
+    {
+        "id": "rain_cozy",
+        "label": "Cozy Rainy Day",
+        "description_pt": "dia chuvoso e aconchegante",
+        "search_terms": ["cozy rainy day", "rainy day inside", "rainy day relaxing"],
+    },
+    {
+        "id": "rain_meditation",
+        "label": "Rain for Meditation",
+        "description_pt": "chuva para meditação e foco",
+        "search_terms": ["rain meditation", "rain for focus", "rain white noise"],
+    },
 ]
 
+# ── Templates de título ──────────────────────────────────────────────────────
 
-def call_ai_cascade(prompt):
-    for name, fn in PROVIDERS:
-        try:
-            print(f"   Trying: {name}...")
-            raw    = fn(prompt)
-            result = clean_json(raw)
-            tags   = result.get("tags", [])
-            if tags and tags[0] in ("30 tags", "tag one", "lowercase"):
-                raise ValueError("Provider returned example tags instead of real ones")
-            print(f"   OK: {name}")
-            return result
-        except Exception as e:
-            print(f"   Failed {name}: {e}")
-    print("   All providers failed. Using fallback.")
-    return None
+TITLE_TEMPLATES = [
+    "{label} for Sleeping 😴 | {hours} Hours | {channel}",
+    "{label} Sounds for Deep Sleep | {hours} Hours",
+    "{hours} Hours of {label} | Fall Asleep Fast",
+    "{label} White Noise | {hours} Hours for Sleep & Relaxation",
+    "Sleep to {label} | {hours} Hours of Rain Sounds",
+    "{label} for Study & Sleep | {hours} Hours | {channel}",
+    "Relaxing {label} | {hours} Hours | White Noise for Sleep",
+    "{hours} Hour {label} | No Ads | Sleeping & Relaxation",
+    "{label} ASMR | {hours} Hours | {channel}",
+    "Fall Asleep Fast with {label} | {hours} Hours",
+]
+
+# ── Templates de descrição ───────────────────────────────────────────────────
+
+DESCRIPTION_INTRO = [
+    "🌧️ Let the sound of {description_pt} carry you into a deep, restful sleep.",
+    "🌧️ Immerse yourself in {description_pt} — perfect for sleep, study, or relaxation.",
+    "🌧️ Drift off to the natural sound of {description_pt}.",
+    "🌧️ {hours} hours of uninterrupted {description_pt} to help you sleep through the night.",
+]
+
+DESCRIPTION_BODY = """\
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌙 Nocturne Noise — Rain & Thunder Sounds for Sleep
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ No music, no interruptions — just pure rain sounds
+✅ Ideal for deep sleep, insomnia, anxiety, and focus
+✅ Baby sleep | Study | Meditation | ASMR
+
+🔔 Subscribe for new rain sounds every week!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏱️ Timestamps:
+0:00 — {label} Begins
+{half_hours}:00 — Midpoint
+{hours}:00:00 — End
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+DESCRIPTION_TAGS_BLOCK = """\
+#RainSounds #SleepSounds #{tag1} #{tag2} #WhiteNoise #ASMR #NocturneNoise
+"""
+
+# ── Tags YouTube ─────────────────────────────────────────────────────────────
+
+BASE_TAGS = [
+    "rain sounds",
+    "rain sounds for sleeping",
+    "sleep sounds",
+    "white noise",
+    "rain white noise",
+    "sleeping sounds",
+    "relaxing rain",
+    "rain asmr",
+    "rain for study",
+    "rain sounds 10 hours",
+    "rain sounds 8 hours",
+    "rain for insomnia",
+    "deep sleep music",
+    "nocturne noise",
+    "rain meditation",
+]
+
+VARIANT_TAGS = {
+    "heavy_rain":    ["heavy rain", "pouring rain", "torrential rain", "heavy rain sounds"],
+    "gentle_rain":   ["gentle rain", "soft rain", "light rain sounds", "calm rain"],
+    "rain_window":   ["rain on window", "rain on glass", "rain against window"],
+    "rain_roof":     ["rain on roof", "tin roof rain", "rain on metal roof"],
+    "rain_forest":   ["forest rain", "jungle rain", "rain in woods"],
+    "rain_thunder":  ["thunderstorm", "thunder rain", "thunder sounds", "storm sounds"],
+    "thunder_heavy": ["heavy thunderstorm", "severe storm", "powerful thunder", "lightning sounds"],
+    "rain_night":    ["night rain", "rainy night", "rain at night", "midnight rain"],
+    "rain_cozy":     ["cozy rain", "rainy day", "cozy rainy day", "rainy day sounds"],
+    "rain_meditation": ["rain focus", "rain study", "concentration sounds", "rain mindfulness"],
+}
+
+# ── Playlists ─────────────────────────────────────────────────────────────────
+
+PLAYLISTS = {
+    "rain":       "Rain Sounds for Sleeping",
+    "thunder":    "Thunderstorm & Lightning Sounds",
+    "all":        "Nocturne Noise — All Rain Sounds",
+}
+
+def get_playlist_for_variant(variant_id: str) -> list[str]:
+    """Retorna lista de playlists adequadas para o variant."""
+    thunder_variants = {"rain_thunder", "thunder_heavy"}
+    playlists = [PLAYLISTS["all"]]
+    if variant_id in thunder_variants:
+        playlists.append(PLAYLISTS["thunder"])
+    else:
+        playlists.append(PLAYLISTS["rain"])
+    return playlists
 
 
-def build_fallback_metadata(theme_data, category, duration_hours, series_num):
-    dur      = f"{duration_hours} Hours"
-    titles   = FALLBACK_TITLES.get(category, ["Relaxing Sounds • A Quiet Place to Rest"])
-    hashtags = CATEGORY_HASHTAGS[category]
-    kw       = random.choice(KEYWORD_CLUSTERS.get(category, ["Relaxing Sounds"]))
-    use_tags = USE_CASE_TAGS.get(category, [])
+# ── Função principal ──────────────────────────────────────────────────────────
 
-    # Pick a title that hasn't been used recently
-    used_titles = get_used_long_titles()
-    available = [t for t in titles if t.lower().strip() not in used_titles]
-    if not available:
-        available = titles  # Reset if all used
-    title = random.choice(available)
+def generate_metadata(variant_id: str = None, hours: int = 8) -> dict:
+    """
+    Gera metadados completos para um vídeo do canal.
 
-    base_tags = [
-        "relaxing sounds", "sleep sounds", "ambient music",
-        "study music", "focus music", "lofi", "calm music",
-        "soundscape", "sleep aid", "background music",
-        "nature sounds", "stress relief", "chillout",
-        "work from home", "deep focus", "concentration",
-        "peaceful", "relax", "ambient noise", "nocturne noise",
-        f"{duration_hours} hour ambient", f"{duration_hours} hours relaxing",
-        "asmr no talking",
-    ]
-    all_tags = list(dict.fromkeys(use_tags[:6] + base_tags))[:18]
+    Args:
+        variant_id: ID do variant (ex: 'heavy_rain'). Se None, escolhe aleatório.
+        hours: Duração do vídeo em horas (padrão 8).
 
-    return {
-        "title": title[:80],
-        "description": (
-            f"Close the door, put this on, and let everything else disappear.\n"
-            f"{duration_hours} hours of {theme_data['theme']}. No interruptions.\n\n"
-            f"🔔 New sounds twice a week — subscribe → https://www.youtube.com/@NocturneNoise\n\n"
-            f"🎧 Perfect for: studying, working, falling asleep, unwinding.\n"
-            f"{duration_hours} hours of uninterrupted {theme_data['theme']}.\n\n"
-            f"0:00 Intro\n0:30 {theme_data['theme'].title()}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👍 If this helped, leave a like — it really helps the channel grow.\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"{hashtags}"
-        ),
-        "tags": all_tags,
-        "thumbnail_text":      f"{dur} • {theme_data['theme'].split()[0].title()}",
-        "youtube_category_id": "10",
-        "_fallback":           True,
+    Returns:
+        dict com title, description, tags, playlists, variant_id, search_terms.
+    """
+    # Selecionar variante
+    if variant_id:
+        variant = next((v for v in RAIN_VARIANTS if v["id"] == variant_id), None)
+        if not variant:
+            raise ValueError(f"Variant '{variant_id}' não encontrado.")
+    else:
+        variant = random.choice(RAIN_VARIANTS)
+
+    # Título
+    title_template = random.choice(TITLE_TEMPLATES)
+    title = title_template.format(
+        label=variant["label"],
+        hours=hours,
+        channel=CHANNEL_NAME,
+    )
+
+    # Descrição
+    intro = random.choice(DESCRIPTION_INTRO).format(
+        description_pt=variant["description_pt"],
+        hours=hours,
+    )
+    variant_tags = VARIANT_TAGS.get(variant["id"], [])
+    tag1 = variant_tags[0].replace(" ", "") if variant_tags else "RainSounds"
+    tag2 = variant_tags[1].replace(" ", "") if len(variant_tags) > 1 else "SleepSounds"
+
+    body = DESCRIPTION_BODY.format(
+        label=variant["label"],
+        hours=hours,
+        half_hours=hours // 2,
+    )
+    tags_block = DESCRIPTION_TAGS_BLOCK.format(tag1=tag1.title(), tag2=tag2.title())
+    description = f"{intro}\n\n{body}{tags_block}"
+
+    # Tags completas (max 500 chars para YouTube)
+    all_tags = BASE_TAGS + variant_tags
+    all_tags = list(dict.fromkeys(all_tags))  # deduplica
+
+    # Playlists
+    playlists = get_playlist_for_variant(variant["id"])
+
+    metadata = {
+        "variant_id":   variant["id"],
+        "variant_label": variant["label"],
+        "title":        title,
+        "description":  description,
+        "tags":         all_tags,
+        "playlists":    playlists,
+        "search_terms": variant["search_terms"],
+        "hours":        hours,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
     }
 
-
-def pick_theme(theme_override=None, category=None):
-    if category and category not in THEMES:
-        raise ValueError(f"Invalid category. Use: {list(THEMES.keys())}")
-
-    used = get_used_themes()
-
-    if category:
-        cat    = category
-        themes = THEMES[cat]
-    else:
-        all_themes = [(t, cat) for cat, themes in THEMES.items() for t in themes]
-        unused     = [(t, c) for t, c in all_themes if t["theme"] not in used]
-        if not unused:
-            unused = all_themes
-        chosen_theme, cat = random.choice(unused)
-        return chosen_theme, cat
-
-    if theme_override:
-        match = next((t for t in themes if theme_override.lower() in t["theme"].lower()), None)
-        return (match or themes[0]), cat
-
-    unused = [t for t in themes if t["theme"] not in used]
-    if not unused:
-        unused = themes
-    return random.choice(unused), cat
-
-
-MISLEADING_TAGS = {
-    "sounds for babies",
-    "study with me",
-    "viral",
-    "trending",
-    "tiktok",
-}
-
-CATEGORY_REQUIRED_TAGS = {
-    "rain": ["rain sounds", "rain sounds no music", "sleep sounds"],
-    "jazz": ["instrumental jazz", "smooth jazz", "jazz background music"],
-    "lofi": ["lofi beats", "lofi music", "study music"],
-}
-
-
-def postprocess_metadata(metadata, category, duration_hours, theme_data):
-    """Keep SEO useful without making the upload look mass-produced or misleading."""
-    metadata["title"] = metadata.get("title", "").strip()[:80]
-    metadata["description"] = metadata.get("description", "").strip()
-
-    raw_tags = metadata.get("tags", [])
-    clean_tags = []
-    for tag in raw_tags:
-        tag = re.sub(r"[^a-z0-9 ]+", "", str(tag).lower()).strip()
-        tag = re.sub(r"\s+", " ", tag)
-        if not tag or tag in MISLEADING_TAGS:
-            continue
-        if tag not in clean_tags:
-            clean_tags.append(tag)
-
-    for tag in CATEGORY_REQUIRED_TAGS.get(category, []):
-        if tag not in clean_tags:
-            clean_tags.insert(0, tag)
-
-    duration_tags = [
-        f"{duration_hours} hour {category}",
-        f"{duration_hours} hours {category}",
-        f"{duration_hours} hours {theme_data['theme'].split()[0]}",
-    ]
-    for tag in duration_tags:
-        if tag not in clean_tags:
-            clean_tags.append(tag)
-
-    if "nocturne noise" not in clean_tags:
-        clean_tags.append("nocturne noise")
-
-    metadata["tags"] = clean_tags[:18]
-    metadata["editorial_note"] = (
-        "Metadata sanitized for truthful search intent and lower repetitive-content risk."
-    )
     return metadata
 
 
-def generate_metadata(theme_override=None, duration_hours=None, category=None):
-    theme_data, category = pick_theme(theme_override, category)
-    if not duration_hours:
-        duration_hours = random.choice(DURATIONS)
-
-    series_num = get_series_number(category)
-
-    print(f"\nTheme: {theme_data['theme']}")
-    print(f"Category: {category} | Duration: {duration_hours}h | Vol. {series_num}")
-
-    prompt   = build_prompt(theme_data, category, duration_hours, series_num)
-    metadata = call_ai_cascade(prompt)
-
-    if metadata is None:
-        metadata = build_fallback_metadata(theme_data, category, duration_hours, series_num)
-
-    metadata = postprocess_metadata(metadata, category, duration_hours, theme_data)
-
-    metadata["theme"]          = theme_data["theme"]
-    metadata["theme_data"]     = theme_data
-    metadata["category"]       = category
-    metadata["duration_hours"] = duration_hours
-    metadata["series_num"]     = series_num
-    metadata["generated_at"]   = datetime.now().isoformat()
-
-    mark_theme_used(theme_data["theme"])
-
-    # Save title to deduplication history
-    save_long_title(metadata.get("title", ""))
-
-    fname = f"metadata_{theme_data['theme'][:30].replace(' ','_')}.json"
-    with open(fname, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-    print(f"Title: {metadata.get('title','')}")
-    print(f"Tags: {len(metadata.get('tags', []))} | Saved: {fname}\n")
-    return metadata
-
+# ── CLI / teste ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--theme",    type=str)
-    p.add_argument("--category", choices=list(THEMES.keys()))
-    p.add_argument("--duration", type=int, choices=DURATIONS)
-    args = p.parse_args()
-    generate_metadata(theme_override=args.theme, duration_hours=args.duration, category=args.category)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Gera metadados para vídeo Nocturne Noise")
+    parser.add_argument("--variant", type=str, default=None, help="ID do variant (ex: heavy_rain)")
+    parser.add_argument("--hours",   type=int, default=8,    help="Duração em horas")
+    parser.add_argument("--output",  type=str, default=None, help="Arquivo JSON de saída")
+    args = parser.parse_args()
+
+    meta = generate_metadata(variant_id=args.variant, hours=args.hours)
+
+    print("=" * 60)
+    print(f"VARIANT:  {meta['variant_id']}")
+    print(f"TÍTULO:   {meta['title']}")
+    print(f"TAGS:     {', '.join(meta['tags'][:8])}...")
+    print(f"PLAYLIST: {meta['playlists']}")
+    print("=" * 60)
+    print("\nDESCRIÇÃO:\n")
+    print(meta["description"])
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"\n✅ Metadados salvos em: {args.output}")
