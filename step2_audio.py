@@ -445,7 +445,7 @@ def loop_audio_ffmpeg(segs, hours, output_path="output_audio.mp3"):
 
     print(f"  ffmpeg concat: {repeats}x loop of {len(seg_paths)} segments → target {target_sec}s")
 
-    # ffmpeg: concat → trim to exact duration → fade out last 8s → encode 320k MP3
+    # ffmpeg: concat → trim to exact duration → fade in/out → encode MP3
     fade_start = max(0, target_sec - 8)
     cmd = [
         "ffmpeg", "-y",
@@ -459,7 +459,6 @@ def loop_audio_ffmpeg(segs, hours, output_path="output_audio.mp3"):
         "-ar", "44100",
         "-ac", "2",
         "-b:a", EXPORT_BITRATE,
-        "-ac", "2",
         output_path,
     ]
 
